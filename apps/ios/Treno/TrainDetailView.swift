@@ -91,7 +91,7 @@ struct TrainDetailView: View {
             ? s?.schedDepEpoch.map { $0 + Double(delay) * 1000 }
             : s?.schedDepEpoch
         var arr = abs(delay) >= 60
-            ? (s?.destinationOperatorEta ?? s?.ourEstimate?.p50)
+            ? (s?.ourEstimate?.p50 ?? s?.destinationOperatorEta)
             : s?.schedArrEpoch
         if s?.status == "arrived", let last = d.stops?.last, let actual = last.actualArrEpoch {
             arr = actual
@@ -419,10 +419,13 @@ struct TrainDetailView: View {
 
     private func stopRow(_ stop: DetailStop, passed: Bool, isNext: Bool, isFirst: Bool, isLast: Bool) -> some View {
         let cancelled = stop.cancelled == 1
-        let pred = stop.opPredArrEpoch
-        let sched = stop.schedArrEpoch
+        // the origin has no arrival event — its row reads better as a departure
+        let isOrigin = stop.stopSequence == 1 || (stop.schedArrEpoch == nil && stop.schedDepEpoch != nil)
+        let pred = isOrigin ? stop.opPredDepEpoch : stop.opPredArrEpoch
+        let sched = isOrigin ? stop.schedDepEpoch : stop.schedArrEpoch
+        let actual = isOrigin ? stop.actualDepEpoch : stop.actualArrEpoch
         let showDelta = !passed && !cancelled && pred != nil && pred != sched
-        let shownTime = passed ? stop.actualArrEpoch : (showDelta ? pred : sched)
+        let shownTime = passed ? actual : (showDelta ? pred : sched)
         let timeColor: Color = {
             if passed { return .tMuted }
             if showDelta, let p = pred, let s = sched {

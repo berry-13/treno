@@ -86,12 +86,6 @@ struct StationBoardView: View {
                                     .listRowSeparator(.hidden)
                                     .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
                             }
-                            Text("Trenord MIA + Viaggiatreno · auto-refresh · times in Europe/Rome")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.tDim)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
                         }
                     }
                     .scrollContentBackground(.hidden)

@@ -33,7 +33,6 @@ struct TrainDetailView: View {
                             }
                             timeline(detail)
                                 .id("journey")
-                            footer
                         }
                         .padding(.bottom, 48)
                     } else if let errorText {
@@ -290,23 +289,17 @@ struct TrainDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: live provenance (§97 in one quiet line)
+    // MARK: live strip — one quiet line, no source jargon
 
     @ViewBuilder
     private func liveStrip(_ d: TrainDetail) -> some View {
-        let sources = (d.state?.sources ?? [:])
-            .compactMapValues { $0.ageSec != nil ? $0 : nil }
-            .sorted { ($0.value.ageSec ?? 0) < ($1.value.ageSec ?? 0) }
-        guard !sources.isEmpty else { return AnyView(EmptyView()) }
+        let ages = (d.state?.sources ?? [:]).compactMapValues { $0.ageSec }.values
+        guard let freshest = ages.min() else { return AnyView(EmptyView()) }
         let running = d.state?.status == "running"
-        let names = sources.map { key, o in
-            let label = key == "mia" ? "Trenord" : (key == "viaggiatreno" ? "ViaggiaTreno" : key.capitalized)
-            return "\(label) \(Fmt.age(o.ageSec))"
-        }
         return AnyView(
             HStack(spacing: 6) {
                 Circle().fill(running ? Color.tPrimary : Color.tDim).frame(width: 5, height: 5)
-                Text(names.joined(separator: " · "))
+                Text(running ? "live · updated \(Fmt.age(freshest))" : "updated \(Fmt.age(freshest))")
                     .font(.system(size: 11.5))
                     .monospacedDigit()
                     .foregroundStyle(.tDim)
@@ -496,16 +489,6 @@ struct TrainDetailView: View {
         .padding(.vertical, 8)
         .background(isNext ? Color.tPrimary.opacity(0.05) : Color.clear)
         .overlay(alignment: .bottom) { if !isLast { hairline.padding(.horizontal, 48) } }
-    }
-
-    // MARK: footer
-
-    private var footer: some View {
-        Text("Trenord MIA + Viaggiatreno · auto-refresh · times in Europe/Rome")
-            .font(.system(size: 10.5))
-            .foregroundStyle(.tDim)
-            .frame(maxWidth: .infinity)
-            .padding(.top, 18)
     }
 
     // MARK: helpers

@@ -41,11 +41,6 @@ struct TripDetailView: View {
                             journeyRow(j, isNext: i == 0)
                         }
                     }
-                    Text("direct trains only · live from Trenord MIA + Viaggiatreno")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.tDim)
-                        .padding(.top, 18)
-                        .frame(maxWidth: .infinity)
                 }
                 .padding(.bottom, 48)
             }

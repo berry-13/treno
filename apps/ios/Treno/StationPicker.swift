@@ -142,15 +142,9 @@ struct StationPickerSheet: View {
             dismiss()
         } label: {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(st.name)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.tFg)
-                    Text(st.stopId)
-                        .font(.system(size: 10.5))
-                        .monospacedDigit()
-                        .foregroundStyle(.tDim)
-                }
+                Text(st.name)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.tFg)
                 Spacer()
                 if st.stopId == currentId {
                     Image(systemName: "checkmark")
@@ -209,9 +203,8 @@ struct MapStationsView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(sel.name).font(.system(size: 17, weight: .bold))
-                            Text("\(sel.depCount) departures today · \(sel.stopId)")
+                            Text("\(sel.depCount) departures today")
                                 .font(.system(size: 11.5))
-                                .monospacedDigit()
                                 .foregroundStyle(.tMuted)
                         }
                         Spacer()

@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// Settings tab: server, live source health, collected-data stats, about.
+/// Settings: server connection and about. The engineering internals (source
+/// health, ok/err counters, dataset stats) intentionally live in the web
+/// dashboard, not here.
 struct SettingsView: View {
+    @AppStorage("stationId") private var stationId = "S01700"
+    @AppStorage("stationName") private var stationName = "Milano Centrale"
     @State private var url = APIClient.shared.baseUrl
-    @State private var health: HealthResponse?
-    @State private var saving = false
 
     var body: some View {
         ZStack {
@@ -18,61 +20,31 @@ struct SettingsView: View {
                         .font(.system(size: 14, design: .monospaced))
                     Button("Save") {
                         APIClient.shared.baseUrl = url
-                        Task { await loadHealth() }
                     }
                     .foregroundStyle(.tPrimary)
                 } header: {
                     Text("Server")
                 } footer: {
-                    Text("The collector on your Mac — http://127.0.0.1:8787 from the simulator, http://<mac-lan-ip>:8787 from a device.")
+                    Text("Where the live data comes from. On the simulator: http://127.0.0.1:8787 — on your iPhone: your Mac's address, e.g. http://192.168.1.20:8787")
                 }
 
-                Section("Sources") {
-                    if let providers = health?.providers, !providers.isEmpty {
-                        ForEach(providers) { p in
-                            HStack(spacing: 10) {
-                                Circle()
-                                    .fill(p.healthState == "HEALTHY" ? Color.tPrimary : (p.healthState == "DEGRADED" ? Color.tLate : Color.tDanger))
-                                    .frame(width: 7, height: 7)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(p.source)
-                                        .font(.system(size: 14, weight: .medium))
-                                    Text("\(p.okCount) ok · \(p.errCount) err · \(p.changedLastHour ?? 0) updates last hour")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.tDim)
-                                }
-                                Spacer()
-                                if let ms = p.lastLatencyMs {
-                                    Text("\(ms) ms")
-                                        .font(.system(size: 11).monospacedDigit())
-                                        .foregroundStyle(.tMuted)
-                                }
-                            }
-                        }
-                    } else {
-                        Text("no provider data")
-                            .font(.system(size: 13))
+                Section("Default station") {
+                    HStack {
+                        Text(stationName)
+                            .font(.system(size: 15, weight: .medium))
+                        Spacer()
+                        Image(systemName: "building.2")
                             .foregroundStyle(.tDim)
                     }
-                }
-
-                if let c = health?.counts {
-                    Section("Collected so far") {
-                        statRow("train runs seen", c.runs)
-                        statRow("raw snapshots", c.snapshots)
-                        statRow("observations", c.observations)
-                        statRow("stop events", c.stopEvents)
-                        statRow("predictions recorded", c.predictions)
-                        statRow("predictions scored", c.scoredOutcomes)
-                        statRow("segments with stats", c.segmentsWithStats)
-                        statRow("service alerts", c.alerts)
-                    }
+                    Text("Change it from the Stations tab.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.tDim)
                 }
 
                 Section("About") {
                     LabeledContent("Version", value: "0.1.0")
-                    LabeledContent("Model", value: "heuristic-v1")
-                    Text("Prediction quality claims appear only after the benchmark proves them against the operator's own ETAs. Times in Europe/Rome. Unofficial app built on public Trenord/RFI data.")
+                    LabeledContent("Times", value: "Europe/Rome")
+                    Text("Independent, unofficial app built on public Trenord and RFI ViaggiaTreno data. Predictions improve automatically as the system observes more trains — no accuracy is claimed until the benchmark proves it.")
                         .font(.system(size: 11.5))
                         .foregroundStyle(.tDim)
                 }
@@ -80,22 +52,5 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
         }
         .navigationTitle("Settings")
-        .task { await loadHealth() }
-        .refreshable { await loadHealth() }
-    }
-
-    private func loadHealth() async {
-        health = try? await APIClient.shared.health()
-    }
-
-    private func statRow(_ label: String, _ value: Int?) -> some View {
-        HStack {
-            Text(label).foregroundStyle(.tMuted)
-            Spacer()
-            Text((value ?? 0).formatted())
-                .monospacedDigit()
-                .foregroundStyle(.tFg)
-        }
-        .font(.system(size: 13.5))
     }
 }

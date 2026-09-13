@@ -10,7 +10,6 @@ struct HomeView: View {
     @StateObject private var store = TripStore.shared
     @State private var nextByTrip: [UUID: JourneyRow?] = [:]
     @State private var nextByFavorite: [String: BoardDeparture?] = [:]
-    @State private var health: HealthResponse?
     @State private var showAddTrip = false
     @State private var now = Date.now
 
@@ -41,7 +40,6 @@ struct HomeView: View {
                     if !favoriteStations.isEmpty {
                         favoritesSection
                     }
-                    healthFooter
                 }
                 .padding(.top, 4)
                 .padding(.bottom, 40)
@@ -71,9 +69,6 @@ struct HomeView: View {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await loadTripSummaries() }
             group.addTask { await loadFavorites() }
-            group.addTask {
-                health = try? await APIClient.shared.health()
-            }
         }
     }
 
@@ -223,23 +218,6 @@ struct HomeView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    private var healthFooter: some View {
-        HStack(spacing: 8) {
-            ForEach(health?.providers ?? [], id: \.source) { p in
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(p.healthState == "HEALTHY" ? Color.tPrimary : (p.healthState == "DEGRADED" ? Color.tLate : Color.tDanger))
-                        .frame(width: 5, height: 5)
-                    Text(p.source)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(.tDim)
-                }
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 20)
     }
 
     /// names we know without the catalog (suggestions, current board station, trips)

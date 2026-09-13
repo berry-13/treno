@@ -193,6 +193,7 @@ struct MapStationsView: View {
                 }
             }
             .mapStyle(.standard(pointsOfInterest: .excludingAll))
+            .mapControlVisibility(.hidden)
 
             if stations.isEmpty {
                 ProgressView().tint(.tPrimary).frame(maxHeight: .infinity)
@@ -212,13 +213,13 @@ struct MapStationsView: View {
                             onSelect(sel)
                         } label: {
                             Text("Choose")
-                                .font(.system(size: 14, weight: .semibold))
-                                .padding(.horizontal, 16)
+                                .font(.system(size: 14, weight: .bold))
+                                .padding(.horizontal, 18)
                                 .padding(.vertical, 9)
                                 .background(Color.tPrimary, in: Capsule())
                                 .foregroundStyle(.black)
                         }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(16)

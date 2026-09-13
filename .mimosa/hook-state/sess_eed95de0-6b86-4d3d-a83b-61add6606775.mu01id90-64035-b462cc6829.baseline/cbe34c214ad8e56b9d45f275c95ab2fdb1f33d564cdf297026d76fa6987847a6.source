@@ -23,4 +23,14 @@ export function ensureNormalizedTables(db: Db): void {
   db.exec(`CREATE TABLE IF NOT EXISTS predictions(id INTEGER PRIMARY KEY, model_version TEXT NOT NULL, run_id INTEGER NOT NULL, stop_id TEXT NOT NULL, generated_at INTEGER NOT NULL, sched_arr_epoch INTEGER, operator_eta_epoch INTEGER, our_p10 INTEGER, our_p50 INTEGER, our_p90 INTEGER, confidence REAL)`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_pred_run ON predictions(run_id, stop_id, generated_at)');
   db.exec(`CREATE TABLE IF NOT EXISTS prediction_outcomes(prediction_id INTEGER PRIMARY KEY, actual_arr_epoch INTEGER, operator_error_sec INTEGER, our_error_sec INTEGER, recorded_at INTEGER NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS segment_observation(id INTEGER PRIMARY KEY, segment_id TEXT NOT NULL, run_id INTEGER NOT NULL, service_date TEXT, from_stop_id TEXT NOT NULL, to_stop_id TEXT NOT NULL, entered_at INTEGER, left_at INTEGER, runtime_sec INTEGER, entry_delay_sec INTEGER, exit_delay_sec INTEGER, delay_delta_sec INTEGER, time_of_day_sec INTEGER, weekday INTEGER, source TEXT, created_at INTEGER NOT NULL)`);
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_segobs_run ON segment_observation(run_id, from_stop_id, to_stop_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_segobs_segment ON segment_observation(segment_id, entered_at)');
+  db.exec(`CREATE TABLE IF NOT EXISTS segment_stats(segment_id TEXT NOT NULL, bucket TEXT NOT NULL, n INTEGER NOT NULL, rt_p10 REAL, rt_p50 REAL, rt_p90 REAL, dd_p50 REAL, dd_p90 REAL, updated_at INTEGER NOT NULL, PRIMARY KEY(segment_id, bucket))`);
+  db.exec(`CREATE TABLE IF NOT EXISTS service_alerts(id INTEGER PRIMARY KEY, source TEXT NOT NULL, run_id INTEGER, stop_id TEXT, title TEXT, description TEXT, severity TEXT, start_epoch INTEGER, end_epoch INTEGER, payload_hash TEXT NOT NULL UNIQUE, raw_json TEXT, created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS atm_stop_observations(id INTEGER PRIMARY KEY, stop_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, wait_messages TEXT, raw_hash TEXT, quality_flags TEXT)`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_atmobs_stop ON atm_stop_observations(stop_id, fetched_at)');
+  // migrations for databases created before these columns existed
+  try { db.exec('ALTER TABLE predictions ADD COLUMN features_json TEXT'); } catch { /* column exists */ }
+  try { db.exec('ALTER TABLE train_observations ADD COLUMN quality_flags TEXT'); } catch { /* column exists */ }
 }

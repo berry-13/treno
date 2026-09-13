@@ -9,7 +9,9 @@ import { getRow, getRows, runStmt, type Db } from '#core/db.ts';
 import { log } from '#core/log.ts';
 import { romeWallToEpoch, secondsToHms } from '#core/time.ts';
 import { ensureRun, mapSourceKey, resolveRun, type RunRecord } from '#storage/runs.ts';
-import { fillPredictionOutcomes, insertObservation, recordPrediction, saveState, upsertStopEvent } from '#storage/observations.ts';
+import { fillPredictionOutcomes, insertObservation, insertServiceAlert, recordPrediction, saveState, upsertStopEvent } from '#storage/observations.ts';
+import { deriveSegmentObservations } from '#storage/segments.ts';
+import { predictHeuristic, recoveryPrediction, HEURISTIC_MODEL_VERSION } from './heuristic.ts';
 import type { ProviderStopEvent, ProviderTrainSnapshot } from '#providers/types.ts';
 import type { SnapshotInfo } from '#storage/rawStore.ts';
 
@@ -52,6 +54,17 @@ export function ingestSnapshot(db: Db, s: ProviderTrainSnapshot, meta: IngestMet
 
   // observation row only when the relevant fields changed (GOAL.md §44)
   if (meta.snapshot.changed) {
+    // §45 quality flags: detect anomalous delay jumps vs the previous
+    // observation from the same source
+    const flags: string[] = [];
+    const prev = getRow<{ delay_seconds: number | null }>(
+      db,
+      'SELECT delay_seconds FROM train_observations WHERE run_id=? AND source=? ORDER BY ts DESC LIMIT 1',
+      [runId, s.source],
+    );
+    if (prev?.delay_seconds != null && s.delaySeconds != null && Math.abs(s.delaySeconds - prev.delay_seconds) > 1200) {
+      flags.push('DELAY_JUMP');
+    }
     insertObservation(db, {
       runId,
       ts: meta.fetchedAt,
@@ -63,6 +76,21 @@ export function ingestSnapshot(db: Db, s: ProviderTrainSnapshot, meta: IngestMet
       locationKind: locationKind(db, s.lastLocationId),
       status: s.status,
       rawHash: meta.snapshot.relevantHash,
+      qualityFlags: flags,
+    });
+  }
+
+  // §50 alerts: persist provider alerts with dedup
+  for (const alert of s.alerts.slice(0, 10)) {
+    const asObj = typeof alert === 'object' && alert !== null ? alert as Record<string, unknown> : null;
+    insertServiceAlert(db, {
+      source: s.source,
+      runId,
+      stopId: null,
+      title: asObj ? String(asObj.title ?? asObj.description ?? asObj.testo ?? '') || null : String(alert).slice(0, 120),
+      description: asObj ? JSON.stringify(alert).slice(0, 1000) : null,
+      severity: asObj && asObj.severity != null ? String(asObj.severity) : null,
+      raw: alert,
     });
   }
 
@@ -124,6 +152,9 @@ export function ingestSnapshot(db: Db, s: ProviderTrainSnapshot, meta: IngestMet
     }
   }
 
+  // §13: derive traversal observations from actual stop times
+  deriveSegmentObservations(db, runId, s.serviceDate, s.source);
+
   fuseAndPredict(db, runId);
   return { runId, serviceDate: s.serviceDate, trainNumber: s.trainNumber };
 }
@@ -160,6 +191,18 @@ export interface FusedState {
   nextStop: { stopId: string; name: string | null; schedArrEpoch: number | null; opPredArrEpoch: number | null } | null;
   destinationOperatorEta: number | null;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  ourEstimate: {
+    p10: number;
+    p50: number;
+    p90: number;
+    modelVersion: string;
+    confidence: number;
+    recoverySec: number | null;
+    operatorWeight: number;
+    statsCoverage: number;
+    corridorAdjustSec: number;
+  } | null;
+  quality: string[];
   stops: FusedStop[];
 }
 
@@ -167,6 +210,7 @@ interface StopEventRow {
   stop_id: string;
   stop_sequence: number | null;
   sched_arr_epoch: number | null;
+  sched_dep_epoch: number | null;
   op_pred_arr_epoch: number | null;
   actual_arr_epoch: number | null;
   actual_dep_epoch: number | null;
@@ -247,6 +291,11 @@ export function fuseRunState(db: Db, run: RunRecord): FusedState {
   if (Object.keys(sources).length >= 2 && freshAge < 120 && (spread == null || spread <= 120)) confidence = 'HIGH';
   else if (Object.keys(sources).length >= 1 && freshAge < 600 && (spread == null || spread <= 600)) confidence = 'MEDIUM';
 
+  // §45 fused quality flags
+  const quality: string[] = [];
+  if (spread != null && spread > 300) quality.push('SOURCE_CONFLICT');
+  if (Number.isFinite(freshAge) && freshAge > 600) quality.push('STALE_SOURCE');
+
   return {
     runId: run.id,
     runCode: run.train_number + '@' + run.service_date,
@@ -267,6 +316,8 @@ export function fuseRunState(db: Db, run: RunRecord): FusedState {
     nextStop: nextStopRow ? { stopId: nextStopRow.stop_id, name: stopName(db, nextStopRow.stop_id), schedArrEpoch: nextStopRow.sched_arr_epoch, opPredArrEpoch: nextStopRow.op_pred_arr_epoch } : null,
     destinationOperatorEta: destOpEta,
     confidence,
+    ourEstimate: null,
+    quality,
     stops: events.map((e) => ({
       stopId: e.stop_id,
       stopName: stopName(db, e.stop_id),
@@ -281,26 +332,51 @@ export function fuseRunState(db: Db, run: RunRecord): FusedState {
   };
 }
 
-/** Fuse state, persist it, and record the current model's prediction (v0 passthrough). */
+/**
+ * Fuse state, run the current prediction model, persist both. The recorded
+ * model is heuristic-v1 (§66): independent segment-history estimate blended
+ * with the operator ETA; the operator ETA is always stored alongside so the
+ * benchmark can score both (§34).
+ */
 export function fuseAndPredict(db: Db, runId: number): FusedState {
   const run = getRow<RunRecord>(db, 'SELECT * FROM train_runs WHERE id=?', [runId]);
   if (!run) throw new Error('fuseAndPredict: missing run ' + String(runId));
   const state = fuseRunState(db, run);
+
+  const events = getRows<StopEventRow>(
+    db,
+    'SELECT stop_id, stop_sequence, sched_arr_epoch, sched_dep_epoch, actual_arr_epoch, actual_dep_epoch FROM train_stop_events WHERE run_id=? ORDER BY stop_sequence ASC, sched_arr_epoch ASC',
+    [runId],
+  );
+  const prediction = predictHeuristic(db, run, state, events);
+  if (prediction) {
+    state.ourEstimate = {
+      p10: prediction.p10,
+      p50: prediction.p50,
+      p90: prediction.p90,
+      modelVersion: prediction.modelVersion,
+      confidence: prediction.confidence,
+      recoverySec: recoveryPrediction(state, prediction.p50),
+      operatorWeight: prediction.features.operatorWeight,
+      statsCoverage: prediction.features.statsCoverage,
+      corridorAdjustSec: prediction.features.corridorAdjustSec,
+    };
+  }
   saveState(db, runId, JSON.stringify(state));
 
-  // v0 model: our estimate = operator ETA (passthrough baseline; GOAL.md §64 step 10-13)
-  if (state.destination.stopId && state.destinationOperatorEta != null) {
+  if (prediction && state.destination.stopId) {
     recordPrediction(db, {
-      modelVersion: 'passthrough-v0',
+      modelVersion: HEURISTIC_MODEL_VERSION,
       runId,
       stopId: state.destination.stopId,
       generatedAt: Date.now(),
       schedArrEpoch: state.schedArrEpoch,
       operatorEtaEpoch: state.destinationOperatorEta,
-      ourP10: state.destinationOperatorEta - 60_000,
-      ourP50: state.destinationOperatorEta,
-      ourP90: state.destinationOperatorEta + 60_000,
-      confidence: state.confidence === 'HIGH' ? 0.8 : state.confidence === 'MEDIUM' ? 0.5 : 0.3,
+      ourP10: prediction.p10,
+      ourP50: prediction.p50,
+      ourP90: prediction.p90,
+      confidence: prediction.confidence,
+      featuresJson: JSON.stringify(prediction.features),
     });
   }
   return state;

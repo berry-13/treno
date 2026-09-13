@@ -365,19 +365,35 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
   saveState(db, runId, JSON.stringify(state));
 
   if (prediction && state.destination.stopId) {
-    recordPrediction(db, {
-      modelVersion: HEURISTIC_MODEL_VERSION,
-      runId,
-      stopId: state.destination.stopId,
-      generatedAt: Date.now(),
-      schedArrEpoch: state.schedArrEpoch,
-      operatorEtaEpoch: state.destinationOperatorEta,
-      ourP10: prediction.p10,
-      ourP50: prediction.p50,
-      ourP90: prediction.p90,
-      confidence: prediction.confidence,
-      featuresJson: JSON.stringify(prediction.features),
-    });
+    // record at benchmark-useful granularity: always when the estimate moves
+    // materially, else at most every 2 minutes (keeps T-1..T-5 horizon rows
+    // while cutting prediction volume several-fold)
+    const last = getRow<{ our_p50: number | null; operator_eta_epoch: number | null; generated_at: number }>(
+      db,
+      'SELECT our_p50, operator_eta_epoch, generated_at FROM predictions WHERE run_id=? AND model_version=? ORDER BY generated_at DESC LIMIT 1',
+      [runId, HEURISTIC_MODEL_VERSION],
+    );
+    const movedEnough = (a: number | null, b: number | null) =>
+      a == null || b == null || Math.abs(a - b) > 30_000;
+    const due = last == null
+      || movedEnough(last.our_p50, prediction.p50)
+      || movedEnough(last.operator_eta_epoch, state.destinationOperatorEta)
+      || Date.now() - last.generated_at > 120_000;
+    if (due) {
+      recordPrediction(db, {
+        modelVersion: HEURISTIC_MODEL_VERSION,
+        runId,
+        stopId: state.destination.stopId,
+        generatedAt: Date.now(),
+        schedArrEpoch: state.schedArrEpoch,
+        operatorEtaEpoch: state.destinationOperatorEta,
+        ourP10: prediction.p10,
+        ourP50: prediction.p50,
+        ourP90: prediction.p90,
+        confidence: prediction.confidence,
+        featuresJson: JSON.stringify(prediction.features),
+      });
+    }
   }
   return state;
 }

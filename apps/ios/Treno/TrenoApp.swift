@@ -21,6 +21,6 @@ struct RootView: View {
                     TrainDetailView(runId: id)
                 }
         }
-        .tint(.trenoAccent)
+        .tint(.tPrimary)
     }
 }

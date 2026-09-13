@@ -80,26 +80,35 @@ struct StationBoardView: View {
                     description: Text("Nothing is leaving \(stationName) in the next few hours.")
                 )
             } else {
-                List {
-                    ForEach(visible) { d in
-                        row(d)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
+                ScrollViewReader { proxy in
+                    List {
+                        ForEach(visible) { d in
+                            row(d)
+                                .id(d.id)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
+                        }
+                        Section {
+                            Text("Trenord MIA + Viaggiatreno · auto-refresh · times in Europe/Rome")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.tDim)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                        }
                     }
-                    Section {
-                        Text("Trenord MIA + Viaggiatreno · auto-refresh · times in Europe/Rome")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.tDim)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                    }
+                    .scrollContentBackground(.hidden)
+                    .onAppear { maybeDebugScroll(proxy) }
+                    .onChange(of: board == nil) { _, _ in maybeDebugScroll(proxy) }
                 }
-                .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle(stationName)
+        // solid bar once the large title collapses — no Liquid Glass mirror of
+        // scrolling rows, and no forced visibility (forcing it shows the inline
+        // title on top of the half-collapsed large title)
+        .toolbarBackground(Color.tBg, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
@@ -147,6 +156,16 @@ struct StationBoardView: View {
             errorText = nil
         } catch {
             errorText = error.localizedDescription
+        }
+    }
+
+    /// debug hook: `simctl launch <dev> com.treno.Treno --scroll` scrolls the
+    /// board so collapsed-header states can be screenshotted
+    private func maybeDebugScroll(_ proxy: ScrollViewProxy) {
+        guard ProcessInfo.processInfo.arguments.contains("--scroll"),
+              let last = visible.last?.id else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            proxy.scrollTo(last, anchor: .top)
         }
     }
 

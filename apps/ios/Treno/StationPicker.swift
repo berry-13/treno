@@ -193,7 +193,6 @@ struct MapStationsView: View {
                 }
             }
             .mapStyle(.standard(pointsOfInterest: .excludingAll))
-            .mapControlVisibility(.hidden)
 
             if stations.isEmpty {
                 ProgressView().tint(.tPrimary).frame(maxHeight: .infinity)
@@ -226,24 +225,33 @@ struct MapStationsView: View {
                 .padding(16)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            HStack(spacing: 10) {
-                Button {
-                    locateMe()
-                } label: {
-                    Image(systemName: locating ? "location.fill" : "location")
-                        .font(.system(size: 15, weight: .semibold))
-                }
-                .disabled(locating)
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundStyle(.white.opacity(0.75))
-                }
+        .overlay(alignment: .topLeading) {
+            Button {
+                locateMe()
+            } label: {
+                Image(systemName: locating ? "location.fill" : "location")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 42, height: 42)
             }
-            .padding(16)
+            .buttonStyle(.glass)
+            .tint(.tPrimary)
+            .disabled(locating)
+            .padding(.leading, 16)
+            .padding(.top, 10)
+        }
+        .overlay(alignment: .topTrailing) {
+            // sits below MapKit's compass, which owns the top-right corner
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .bold))
+                    .frame(width: 42, height: 42)
+            }
+            .buttonStyle(.glass)
+            .tint(.white)
+            .padding(.trailing, 16)
+            .padding(.top, 70)
         }
         .preferredColorScheme(.dark)
         .tint(.tPrimary)

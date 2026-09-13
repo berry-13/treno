@@ -1,0 +1,122 @@
+/**
+ * Time handling (GOAL.md §80): UTC instants internally, Europe/Rome wall clock
+ * for service-day logic. GTFS times are seconds since service-day midnight and
+ * may exceed 86400 (24:05:00, 25:12:00) — never collapse them into a wall time.
+ */
+export const ROME_TZ = 'Europe/Rome';
+
+const ymdFmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: ROME_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+});
+const hmsFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: ROME_TZ, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit',
+});
+
+/** Rome wall-clock calendar date of an instant, as YYYY-MM-DD. */
+export function romeYmd(epochMs: number): string {
+  return ymdFmt.format(new Date(epochMs));
+}
+
+/** Rome wall-clock time of an instant, as HH:MM:SS. */
+export function romeHms(epochMs: number): string {
+  return hmsFmt.format(new Date(epochMs));
+}
+
+interface WallParts { y: number; m: number; d: number; h: number; mi: number; s: number; }
+
+function romeWallParts(epochMs: number): WallParts {
+  const dp = ymdFmt.formatToParts(new Date(epochMs));
+  const tp = hmsFmt.formatToParts(new Date(epochMs));
+  const val = (parts: Intl.DateTimeFormatPart[], type: string): number => {
+    for (const p of parts) {
+      if (p.type === type) return Number(p.value);
+    }
+    return 0;
+  };
+  return {
+    y: val(dp, 'year'), m: val(dp, 'month'), d: val(dp, 'day'),
+    h: val(tp, 'hour'), mi: val(tp, 'minute'), s: val(tp, 'second'),
+  };
+}
+
+/** Rome UTC offset (east positive) in ms at the given instant. */
+function romeOffsetMs(epochMs: number): number {
+  const w = romeWallParts(epochMs);
+  const asUtc = Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi, w.s);
+  return asUtc - epochMs;
+}
+
+function parseYmd(ymd: string): { y: number; m: number; d: number } {
+  return {
+    y: Number(ymd.slice(0, 4)),
+    m: Number(ymd.slice(5, 7)),
+    d: Number(ymd.slice(8, 10)),
+  };
+}
+
+/**
+ * Convert a Rome wall-clock (date + seconds since midnight of that date,
+ * possibly > 86400 for after-midnight service times) to a UTC epoch.
+ * Two-pass offset correction handles DST boundaries well enough for minute-level data.
+ */
+export function romeWallToEpoch(ymd: string, secSinceMidnight: number): number {
+  const dayOffset = Math.floor(secSinceMidnight / 86400);
+  const secInDay = secSinceMidnight - dayOffset * 86400;
+  const h = Math.floor(secInDay / 3600);
+  const mi = Math.floor((secInDay - h * 3600) / 60);
+  const s = secInDay - h * 3600 - mi * 60;
+  const { y, m, d } = parseYmd(ymd);
+  const base = Date.UTC(y, m - 1, d) + dayOffset * 86400_000;
+  const guess = base + (h * 3600 + mi * 60 + s) * 1000;
+  let epoch = guess;
+  for (let i = 0; i < 2; i++) {
+    epoch = guess - romeOffsetMs(epoch);
+  }
+  return epoch;
+}
+
+/** "HH:MM:SS" (optionally > 23h in GTFS style) → seconds. Returns null if unparseable. */
+export function hmsToSeconds(hms: string | null | undefined): number | null {
+  if (typeof hms !== 'string' || hms.length < 4 || hms.length > 8) return null;
+  const cleaned = hms.trim();
+  let h = 0, mi = 0, s = 0;
+  if (cleaned.length === 5) {
+    h = Number(cleaned.slice(0, 2)); mi = Number(cleaned.slice(3, 5));
+  } else if (cleaned.length === 8) {
+    h = Number(cleaned.slice(0, 2)); mi = Number(cleaned.slice(3, 5)); s = Number(cleaned.slice(6, 8));
+  } else {
+    return null;
+  }
+  if (!Number.isFinite(h) || !Number.isFinite(mi) || !Number.isFinite(s)) return null;
+  return h * 3600 + mi * 60 + s;
+}
+
+/** seconds since midnight → "HH:MM:SS" (hours may exceed 23; negatives render with sign). */
+export function secondsToHms(sec: number | null | undefined): string | null {
+  if (sec == null) return null;
+  const sign = sec < 0 ? '-' : '';
+  const a = Math.abs(Math.round(sec));
+  const h = Math.floor(a / 3600), mi = Math.floor((a % 3600) / 60), s = a % 60;
+  const hh = String(h).padStart(2, '0'), mm = String(mi).padStart(2, '0'), ss = String(s).padStart(2, '0');
+  return sign + hh + ':' + mm + ':' + ss;
+}
+
+/** Rome wall-clock "HH:MM:SS" on a service date, with possible >24h GTFS values, → epoch ms. */
+export function romeServiceTimeToEpoch(serviceYmd: string, hms: string | null | undefined): number | null {
+  const sec = hmsToSeconds(hms);
+  if (sec == null) return null;
+  return romeWallToEpoch(serviceYmd, sec);
+}
+
+/** Shift a YYYY-MM-DD by n days. */
+export function ymdPlusDays(ymd: string, n: number): string {
+  const { y, m, d } = parseYmd(ymd);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+}
+
+/** GTFS YYYYMMDD → YYYY-MM-DD. */
+export function gtfsDateToYmd(g: string): string {
+  return g.slice(0, 4) + '-' + g.slice(4, 6) + '-' + g.slice(6, 8);
+}

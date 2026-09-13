@@ -1,0 +1,36 @@
+import { mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+
+/** Central configuration, env-overridable. */
+export interface Config {
+  dataDir: string;
+  userAgent: string;
+  apiPort: number;
+  /** max distinct train runs tracked simultaneously */
+  maxTrackedRuns: number;
+  /** minutes after scheduled arrival / arrival event to keep polling a run */
+  runCooldownMinutes: number;
+  /** poll floor in seconds (never poll a single entity faster) */
+  minPollSeconds: number;
+  gtfsUrl: string;
+}
+
+const repoRoot = resolve(import.meta.dirname, '../../..');
+
+export function loadConfig(): Config {
+  const dataDir = process.env.TRENO_DATA_DIR ?? join(repoRoot, 'data');
+  mkdirSync(dataDir, { recursive: true });
+  return {
+    dataDir,
+    userAgent:
+      process.env.TRENO_USER_AGENT ??
+      'treno-collector/0.1 (independent transit prediction research; conservative polling; contact via github)',
+    apiPort: Number(process.env.TRENO_API_PORT ?? 8787),
+    maxTrackedRuns: Number(process.env.TRENO_MAX_TRACKED ?? 80),
+    runCooldownMinutes: Number(process.env.TRENO_RUN_COOLDOWN_MIN ?? 15),
+    minPollSeconds: Number(process.env.TRENO_MIN_POLL_SEC ?? 20),
+    gtfsUrl:
+      process.env.TRENO_GTFS_URL ??
+      'https://www.dati.lombardia.it/download/3z4k-mxz9/application/zip',
+  };
+}

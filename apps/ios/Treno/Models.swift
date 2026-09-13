@@ -90,6 +90,7 @@ struct TrainDetail: Codable {
     let id: Int
     let trainNumber: String
     let serviceDate: String
+    let operatorName: String?
     let originStop: String?
     let destinationStop: String?
     let state: TrainState?
@@ -100,6 +101,7 @@ struct TrainDetail: Codable {
 
     enum CodingKeys: String, CodingKey {
         case id, trainNumber, serviceDate, state, stops, recentObservations, latestPrediction, connections
+        case operatorName = "operator"
         case originStop = "origin"
         case destinationStop = "destination"
     }
@@ -247,5 +249,15 @@ enum Fmt {
         if s < 60 { return "\(s)s ago" }
         if s < 3600 { return "\(Int((Double(s) / 60).rounded()))m ago" }
         return "\(Int((Double(s) / 3600).rounded()))h ago"
+    }
+
+    /// "in 38m" / "in 1h 05m" — rounded up; nil when already past or too far
+    static func countdown(_ toMs: Double?, now: Date) -> String? {
+        guard let ms = toMs else { return nil }
+        let sec = Int((ms / 1000 - now.timeIntervalSince1970).rounded(.up))
+        guard sec > 0, sec < 18 * 3600 else { return nil }
+        if sec < 3600 { return "in \((sec + 59) / 60)m" }
+        let h = sec / 3600, m = (sec % 3600) / 60
+        return m == 0 ? "in \(h)h" : String(format: "in %dh %02dm", h, m)
     }
 }

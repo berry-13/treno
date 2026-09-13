@@ -24,7 +24,6 @@ import { segmentStatsTable, corridorDelta, segmentId as segId } from '#storage/s
 import { connectionOptions } from '#collector/heuristic.ts';
 import { secondsIntoServiceDay, bareTrainNumber } from '#collector/discover.ts';
 import { romeYmd, romeWallToEpoch, ymdPlusDays } from '#core/time.ts';
-import { journeysFor } from './journeys.ts';
 
 interface StateRow { run_id: number; state_json: string; updated_at: number }
 
@@ -151,37 +150,6 @@ export function buildApp(db: Db) {
     const q = (c.req.query('q') ?? '').trim();
     if (q.length < 2) return c.json([]);
     return c.json(searchStops(db, q, 20));
-  });
-
-  // all rail stations with coords + today's departure volume (map + nearest)
-  let stationsCache: { at: number; rows: Array<{ stopId: string; name: string; lat: number | null; lon: number | null; depCount: number }> } | null = null;
-  app.get('/api/stations', (c) => {
-    const today = romeYmd(Date.now());
-    if (stationsCache && Date.now() - stationsCache.at < 600_000) return c.json(stationsCache.rows);
-    const rows = getRows<{ stopId: string; name: string; lat: number | null; lon: number | null; depCount: number }>(
-      db,
-      `SELECT g.stop_id AS stopId, g.stop_name AS name, g.stop_lat AS lat, g.stop_lon AS lon, COUNT(DISTINCT s.trip_id) AS depCount
-       FROM gtfs_stops g
-       JOIN gtfs_stop_times st ON st.stop_id = g.stop_id
-       JOIN gtfs_trip_summaries s ON s.trip_id = st.trip_id
-       JOIN gtfs_trips t ON t.trip_id = s.trip_id
-       JOIN gtfs_calendar_dates cd ON cd.service_id = t.service_id AND cd.exception_type = 1
-       JOIN gtfs_routes r ON r.route_id = s.route_id AND r.route_type = 2
-       WHERE cd.date = ?
-       GROUP BY g.stop_id ORDER BY depCount DESC`,
-      [today.slice(0, 4) + today.slice(5, 7) + today.slice(8, 10)],
-    );
-    stationsCache = { at: Date.now(), rows };
-    return c.json(rows);
-  });
-
-  app.get('/api/journeys', (c) => {
-    const from = c.req.query('from') ?? '';
-    const to = c.req.query('to') ?? '';
-    const limit = Math.min(Number(c.req.query('limit') ?? 8), 20);
-    if (from === '' || to === '') return c.json({ error: 'from and to required' }, 400);
-    const journeys = journeysFor(db, from, to, Date.now(), limit);
-    return c.json({ from, to, generatedAt: Date.now(), journeys });
   });
 
   app.get('/api/stops/:id/departures', (c) => {

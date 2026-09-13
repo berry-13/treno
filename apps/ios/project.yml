@@ -13,6 +13,11 @@ targets:
     platform: iOS
     sources:
       - path: Treno
+      - path: Widget/TripActivityAttributes.swift
+    dependencies:
+      - target: TrenoWidget
+        embed: true
+        codeSign: false
     info:
       path: Treno/Info.plist
       properties:
@@ -20,6 +25,8 @@ targets:
         UILaunchScreen: {}
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        NSLocationWhenInUseUsageDescription: "Used to find the station nearest you when creating trips or browsing the map."
+        NSSupportsLiveActivities: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
@@ -32,3 +39,26 @@ targets:
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_ENTITLEMENTS: Treno/Treno.entitlements
+  TrenoWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widget
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: Treno
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.treno.Treno.Widget
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_ENTITLEMENTS: Widget/TrenoWidget.entitlements

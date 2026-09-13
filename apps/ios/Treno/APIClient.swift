@@ -66,6 +66,15 @@ final class APIClient {
         try await get("/api/stops/\(stopId)/departures")
     }
 
+    func allStations() async throws -> [StationLite] {
+        try await get("/api/stations")
+    }
+
+    func journeys(from: String, to: String, limit: Int = 8) async throws -> [JourneyRow] {
+        let r: JourneysResponse = try await get("/api/journeys?from=\(from)&to=\(to)&limit=\(limit)")
+        return r.journeys
+    }
+
     func health() async throws -> HealthResponse {
         try await get("/api/health")
     }

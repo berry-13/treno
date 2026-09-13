@@ -92,23 +92,31 @@ export interface StopDeparture extends ActiveTrip {
   stop_id: string;
   stop_sequence: number;
   departure_sec: number | null;
+  line_name: string | null;
+  destination_name: string | null;
 }
 
-/** Departures from a stop on a service date within [fromSec, toSec] of the service day. */
-export function stopDepartures(db: Db, stopId: string, ymd: string, fromSec: number, toSec: number): StopDeparture[] {
+/** Rail departures from a stop on a service date within [fromSec, toSec] of the service day. */
+export function stopDepartures(db: Db, stopId: string, ymd: string, fromSec: number, toSec: number, limit = 200): StopDeparture[] {
   const rows = getRows<StopDeparture>(
     db,
     `SELECT s.trip_id, s.route_id, s.train_number, s.origin_stop_id, s.destination_stop_id,
        s.dep_sec, s.arr_sec, s.stop_count, s.valid_from, s.valid_to,
-       st.stop_id AS qstop_id, st.stop_sequence, st.departure_sec
+       st.stop_id AS qstop_id, st.stop_sequence, st.departure_sec,
+       r.route_short_name AS line_name, ds.stop_name AS destination_name
      FROM gtfs_stop_times st
      JOIN gtfs_trip_summaries s ON s.trip_id = st.trip_id
      JOIN gtfs_trips t ON t.trip_id = st.trip_id
      JOIN gtfs_calendar_dates cd ON cd.service_id = t.service_id
+     JOIN gtfs_routes r ON r.route_id = s.route_id
+     LEFT JOIN gtfs_stops ds ON ds.stop_id = s.destination_stop_id
      WHERE st.stop_id = ? AND cd.date = ? AND cd.exception_type = 1
        AND st.departure_sec IS NOT NULL AND st.departure_sec >= ? AND st.departure_sec <= ?
-     ORDER BY st.departure_sec ASC`,
-    [stopId, ymdToGtfsDate(ymd), fromSec, toSec],
+       AND st.stop_sequence < s.stop_count
+       AND r.route_type = 2
+     ORDER BY st.departure_sec ASC
+     LIMIT ?`,
+    [stopId, ymdToGtfsDate(ymd), fromSec, toSec, limit],
   );
   // dedup by train number (validity-window overlaps)
   const best = new Map<string, StopDeparture>();

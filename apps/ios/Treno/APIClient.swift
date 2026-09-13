@@ -57,6 +57,15 @@ final class APIClient {
         try await get("/api/trains/\(id)")
     }
 
+    func stations(query: String) async throws -> [Station] {
+        let enc = "q=" + (query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
+        return try await get("/api/stops/search?\(enc)")
+    }
+
+    func stationBoard(stopId: String) async throws -> BoardResponse {
+        try await get("/api/stops/\(stopId)/departures")
+    }
+
     func health() async throws -> HealthResponse {
         try await get("/api/health")
     }

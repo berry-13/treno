@@ -18,12 +18,12 @@ import { loadConfig } from '#core/config.ts';
 import { getRows, getRow, type Db } from '#core/db.ts';
 import { log } from '#core/log.ts';
 import { openTrenoDb } from '#gtfs/setup.ts';
-import { searchStops, stopDepartures } from '#gtfs/schedule.ts';
+import { searchStops, stopById, stopDepartures, type StopDeparture } from '#gtfs/schedule.ts';
 import { providerHealth } from '#storage/observations.ts';
 import { segmentStatsTable, corridorDelta, segmentId as segId } from '#storage/segments.ts';
 import { connectionOptions } from '#collector/heuristic.ts';
-import { secondsIntoServiceDay } from '#collector/discover.ts';
-import { romeYmd } from '#core/time.ts';
+import { secondsIntoServiceDay, bareTrainNumber } from '#collector/discover.ts';
+import { romeYmd, romeWallToEpoch, ymdPlusDays } from '#core/time.ts';
 
 interface StateRow { run_id: number; state_json: string; updated_at: number }
 
@@ -154,14 +154,63 @@ export function buildApp(db: Db) {
 
   app.get('/api/stops/:id/departures', (c) => {
     const stopId = c.req.param('id');
+    const station = stopById(db, stopId);
+    if (!station) return c.json({ error: 'unknown station' }, 404);
     const today = romeYmd(Date.now());
     const nowSec = secondsIntoServiceDay(today);
-    const deps = stopDepartures(db, stopId, today, nowSec - 3600, nowSec + 3 * 3600);
-    const withState = deps.map((d) => {
-      const st = getRow<StateRow>(db, 'SELECT run_id, state_json, updated_at FROM train_state WHERE run_id=(SELECT id FROM train_runs WHERE service_date=? AND train_number=? LIMIT 1)', [today, d.train_number ?? '']);
-      return { ...d, state: st ? JSON.parse(st.state_json) : null };
-    });
-    return c.json(withState);
+    const tomorrow = ymdPlusDays(today, 1);
+    // today's service day keeps post-midnight departures (sec > 86400); the
+    // tomorrow window catches trips whose service date rolls over at midnight
+    const rowsToday = stopDepartures(db, stopId, today, nowSec - 3600, 108_000, 45);
+    const rowsTomorrow = stopDepartures(db, stopId, tomorrow, 0, 10_800, 15);
+    const build = (ymd: string, d: StopDeparture) => {
+      const trainNumber = bareTrainNumber(d.train_number ?? '');
+      const rawLine = d.line_name;
+      const line = rawLine !== null && rawLine.length <= 8 && !rawLine.includes('(') ? rawLine : null;
+      const depEpoch = romeWallToEpoch(ymd, d.departure_sec ?? 0);
+      const run = trainNumber !== ''
+        ? getRow<{ id: number }>(db, 'SELECT id FROM train_runs WHERE service_date=? AND train_number=? LIMIT 1', [ymd, trainNumber])
+        : undefined;
+      let platform: string | null = null;
+      let depDelaySec: number | null = null;
+      let actualDepEpoch: number | null = null;
+      let state: unknown = null;
+      if (run) {
+        const ev = getRow<{ actual_dep_epoch: number | null; dep_delay_sec: number | null; platform_actual: string | null }>(
+          db,
+          'SELECT actual_dep_epoch, dep_delay_sec, platform_actual FROM train_stop_events WHERE run_id=? AND stop_id=?',
+          [run.id, stopId],
+        );
+        if (ev) {
+          platform = ev.platform_actual;
+          depDelaySec = ev.dep_delay_sec;
+          actualDepEpoch = ev.actual_dep_epoch;
+        }
+        // feed sometimes carries nonsense platforms ("1989", "2000") — keep 1..30
+        if (platform !== null) {
+          const pn = Number(platform);
+          if (!Number.isInteger(pn) || pn < 1 || pn > 30) platform = null;
+        }
+        const st = getRow<StateRow>(db, 'SELECT run_id, state_json, updated_at FROM train_state WHERE run_id=?', [run.id]);
+        if (st) state = JSON.parse(st.state_json);
+      }
+      return {
+        runId: run?.id ?? null,
+        trainNumber,
+        line,
+        destinationName: d.destination_name,
+        depEpoch,
+        platform,
+        depDelaySec,
+        actualDepEpoch,
+        state,
+      };
+    };
+    const departures = [
+      ...rowsToday.map((d) => build(today, d)),
+      ...rowsTomorrow.map((d) => build(tomorrow, d)),
+    ].sort((a, b) => a.depEpoch - b.depEpoch);
+    return c.json({ station: { stopId: station.stop_id, name: station.stop_name }, generatedAt: Date.now(), departures });
   });
 
   // minimal static UI

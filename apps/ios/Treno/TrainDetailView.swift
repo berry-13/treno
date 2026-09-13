@@ -62,24 +62,29 @@ struct TrainDetailView: View {
 
     private func hero(_ d: TrainDetail) -> some View {
         let s = d.state
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(d.trainNumber)
-                    .font(.system(size: 44, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
+        let origin = s?.origin?.name ?? d.originStop ?? "?"
+        let destination = s?.destination?.name ?? d.destinationStop ?? "?"
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("\(origin) → \(destination)")
+                    .font(.system(size: 24, weight: .heavy, design: .rounded))
                     .foregroundStyle(.tFg)
-                TBadge(StatusUI.label(s?.status), StatusUI.color(s?.status))
-                Spacer()
+                    .lineLimit(2)
+                Spacer(minLength: 8)
                 if let d2 = s?.operatorDelaySec {
                     Text(Fmt.delay(d2))
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(StatusUI.delayColor(d2))
                 }
             }
-            Text("\(s?.origin?.name ?? d.originStop ?? "?") → \(s?.destination?.name ?? d.destinationStop ?? "?")")
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(.tMuted)
+            HStack(spacing: 8) {
+                TBadge(StatusUI.label(s?.status), StatusUI.color(s?.status))
+                Text("train \(d.trainNumber)")
+                    .font(.system(size: 13, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(.tMuted)
+            }
             HStack(spacing: 14) {
                 if let dep = s?.schedDepEpoch {
                     meta("departs", Fmt.hhmm(dep))
@@ -96,6 +101,7 @@ struct TrainDetailView: View {
         .padding(16)
         .overlay(alignment: .bottom) { hairline }
         .padding(.horizontal, 16)
+        .padding(.top, 6)
     }
 
     private func meta(_ label: String, _ value: String, color: Color = .tMuted) -> some View {

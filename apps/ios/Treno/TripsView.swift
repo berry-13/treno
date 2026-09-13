@@ -34,15 +34,6 @@ struct TripsView: View {
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
                         }
-                    } header: {
-                        Text("SAVED")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .tracking(1.4)
-                            .foregroundStyle(.tDim)
-                    } footer: {
-                        Text("The first trip also drives the home-screen widget. Times are live (Europe/Rome).")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.tDim)
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -143,7 +134,7 @@ struct TripSummaryRow: View {
                         .font(.system(size: 17, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle((j.depDelaySec ?? j.state?.operatorDelaySec ?? 0) >= 60 ? StatusUI.delayColor(j.depDelaySec ?? j.state?.operatorDelaySec) : Color.tFg)
-                    Text("arr " + Fmt.hhmm(j.arrEpoch + Double(arrDelay(j)) * 1000))
+                    Text("→ " + Fmt.hhmm(j.arrEpoch + Double(arrDelay(j)) * 1000))
                         .font(.system(size: 10.5))
                         .monospacedDigit()
                         .foregroundStyle(.tDim)

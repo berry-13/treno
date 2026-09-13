@@ -124,7 +124,6 @@ struct HomeView: View {
 
     private var tripsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionTitle("YOUR TRIPS")
             if store.trips.isEmpty {
                 Button {
                     showAddTrip = true
@@ -163,7 +162,6 @@ struct HomeView: View {
 
     private var favoritesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionTitle("FAVORITE STATIONS").padding(.horizontal, 20)
             VStack(spacing: 0) {
                 ForEach(Array(favoriteStations.enumerated()), id: \.element.0) { i, fav in
                     favoriteRow(fav)
@@ -240,20 +238,8 @@ struct HomeView: View {
                 }
             }
             Spacer()
-            if let c = health?.counts?.scoredOutcomes {
-                Text("\(c.formatted()) scored predictions")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.tDim)
-            }
         }
         .padding(.horizontal, 20)
-    }
-
-    private func sectionTitle(_ t: String) -> some View {
-        Text(t)
-            .font(.system(size: 10.5, weight: .semibold))
-            .tracking(1.4)
-            .foregroundStyle(.tDim)
     }
 
     /// names we know without the catalog (suggestions, current board station, trips)
@@ -346,22 +332,25 @@ struct TripCard: View {
 
             if let j = next, trip.runsToday {
                 HStack(spacing: 10) {
-                    timeBlock(Fmt.hhmm(estDep ?? j.depEpoch), "dep", delay)
+                    Text(Fmt.hhmm(estDep ?? j.depEpoch))
+                        .font(.system(size: 19, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(delay != nil && abs(delay!) >= 60 ? StatusUI.delayColor(delay) : Color.tFg)
                     Image(systemName: "arrow.right")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.tDim)
-                    timeBlock(Fmt.hhmm(j.arrEpoch + Double(arrDelay ?? 0) * 1000), "arr \(arrDelay != nil && abs(arrDelay!) >= 60 ? "ours" : "")".trimmingCharacters(in: .whitespaces), arrDelay)
+                    Text(Fmt.hhmm(j.arrEpoch + Double(arrDelay ?? 0) * 1000))
+                        .font(.system(size: 19, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(arrDelay != nil && abs(arrDelay!) >= 60 ? StatusUI.delayColor(arrDelay) : (arrDelay != nil ? Color.tPrimary : Color.tFg))
                     Spacer()
                     if let p = j.platform, let n = Int(p), n >= 1, n <= 30 {
-                        VStack(spacing: 0) {
-                            Text(p)
-                                .font(.system(size: 15, weight: .bold, design: .rounded))
-                                .monospacedDigit()
-                                .foregroundStyle(.tFg)
-                            Text("bin")
-                                .font(.system(size: 8.5))
-                                .foregroundStyle(.tDim)
-                        }
+                        Text(p)
+                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.tFg)
+                            .frame(width: 26, height: 24)
+                            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     }
                 }
             }
@@ -369,17 +358,5 @@ struct TripCard: View {
         .padding(16)
         .background(Color.tCard, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.tBorder))
-    }
-
-    private func timeBlock(_ time: String, _ label: String, _ delay: Int?) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(time)
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(delay != nil && abs(delay!) >= 60 ? StatusUI.delayColor(delay) : Color.tFg)
-            Text(label)
-                .font(.system(size: 9.5))
-                .foregroundStyle(.tDim)
-        }
     }
 }

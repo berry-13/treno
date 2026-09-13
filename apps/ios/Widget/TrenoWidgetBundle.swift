@@ -108,10 +108,13 @@ struct TripWidgetView: View {
                         .font(.system(size: 26, weight: .heavy, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(WColor.delayColor(delay))
-                    Text(delay != nil && abs(delay!) >= 60 ? "sched " + WFmt.hhmm(j.depEpoch) : "departs")
-                        .font(.system(size: 10))
-                        .monospacedDigit()
-                        .foregroundStyle(WColor.dim)
+                    if delay != nil && abs(delay!) >= 60 {
+                        Text(WFmt.hhmm(j.depEpoch))
+                            .font(.system(size: 10))
+                            .monospacedDigit()
+                            .strikethrough()
+                            .foregroundStyle(WColor.dim)
+                    }
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 1) {
@@ -119,9 +122,6 @@ struct TripWidgetView: View {
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(oursArr != nil ? WColor.primary : WColor.fg)
-                    Text(oursArr != nil ? "ours · arr" : "arrives")
-                        .font(.system(size: 10))
-                        .foregroundStyle(WColor.dim)
                 }
             }
 

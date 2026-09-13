@@ -202,18 +202,18 @@ struct TripDetailView: View {
                         .font(.system(size: 17, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.tPrimary)
-                    Text("ours · sched " + Fmt.hhmm(j.arrEpoch))
-                        .font(.system(size: 9.5))
-                        .monospacedDigit()
-                        .foregroundStyle(.tDim)
+                    if ours != j.arrEpoch {
+                        Text(Fmt.hhmm(j.arrEpoch))
+                            .font(.system(size: 9.5))
+                            .monospacedDigit()
+                            .strikethrough()
+                            .foregroundStyle(.tDim)
+                    }
                 } else {
                     Text(Fmt.hhmm(j.arrEpoch))
                         .font(.system(size: 17, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.tFg)
-                    Text("arrives")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(.tDim)
                 }
             }
             .frame(width: 78, alignment: .trailing)

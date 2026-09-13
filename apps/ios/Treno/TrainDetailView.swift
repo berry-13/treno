@@ -220,10 +220,8 @@ struct TrainDetailView: View {
     private func estimateCard(_ d: TrainDetail) -> some View {
         if let s = d.state, let ours = s.ourEstimate,
            s.status == "running" || s.status == "scheduled" {
-            let destName = s.destination?.name ?? d.destinationStop ?? "destination"
             VStack(spacing: 13) {
-                HStack(alignment: .firstTextBaseline) {
-                    MicroLabel("our estimate · \(destName)")
+                HStack {
                     Spacer()
                     if let conf = s.confidence {
                         TBadge(conf.capitalized, StatusUI.confidenceColor(conf))
@@ -323,14 +321,13 @@ struct TrainDetailView: View {
     private func connections(_ conns: [ConnectionOption], at destName: String) -> some View {
         let bestId = conns.filter { $0.probability > 0.5 }.max { $0.probability < $1.probability }?.id
         return VStack(spacing: 0) {
-            MicroLabel("connections at \(destName)").padding(.horizontal, 20).padding(.top, 24)
             VStack(spacing: 0) {
                 ForEach(Array(conns.enumerated()), id: \.element.id) { i, c in
                     connectionRow(c, isBest: c.id == bestId)
                     if i < conns.count - 1 { hairline.padding(.horizontal, 20) }
                 }
             }
-            .padding(.top, 6)
+            .padding(.top, 24)
         }
     }
 
@@ -400,7 +397,6 @@ struct TrainDetailView: View {
         }
         return AnyView(
             VStack(spacing: 0) {
-                MicroLabel("journey").padding(.horizontal, 20).padding(.top, 24)
                 VStack(spacing: 0) {
                     ForEach(Array(stops.enumerated()), id: \.element.id) { idx, stop in
                         stopRow(
@@ -412,7 +408,7 @@ struct TrainDetailView: View {
                         )
                     }
                 }
-                .padding(.top, 6)
+                .padding(.top, 24)
             }
         )
     }

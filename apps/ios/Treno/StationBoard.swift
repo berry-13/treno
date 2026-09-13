@@ -92,11 +92,6 @@ struct StationBoardView: View {
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                        } header: {
-                            Text("DEPARTURES")
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .tracking(1.4)
-                                .foregroundStyle(.tDim)
                         }
                     }
                     .scrollContentBackground(.hidden)
@@ -247,20 +242,16 @@ struct StationBoardView: View {
         }
     }
 
-    /// platform when known, otherwise the delay itself
+    /// platform chip when known, otherwise the delay itself
     @ViewBuilder
     private func trailing(_ d: BoardDeparture, delay: Int?) -> some View {
         if let plat = d.platform, let n = Int(plat), n >= 1, n <= 30 {
-            VStack(spacing: 0) {
-                Text(plat)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.tFg)
-                Text("bin")
-                    .font(.system(size: 8.5))
-                    .foregroundStyle(.tDim)
-            }
-            .frame(width: 30)
+            Text(plat)
+                .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.tFg)
+                .frame(width: 26, height: 24)
+                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         } else if let s = delay, abs(s) >= 60 {
             Text(Fmt.delayShort(s))
                 .font(.system(size: 15, weight: .bold, design: .rounded))

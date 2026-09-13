@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>treno — predictive transit intelligence</title>
+<style>
+  :root { --bg:#0e1116; --panel:#161b23; --line:#232a35; --fg:#e6e9ef; --dim:#8b93a3; --accent:#4da3ff; --good:#3ecf8e; --warn:#f5c451; --bad:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .wrap { max-width:880px; margin:0 auto; padding:24px 16px 80px; }
+  h1 { font-size:18px; font-weight:650; margin:0 0 4px; letter-spacing:.3px; }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:20px; }
+  input[type=search] { width:100%; padding:11px 14px; border-radius:10px; border:1px solid var(--line); background:var(--panel); color:var(--fg); font-size:15px; outline:none; }
+  input[type=search]:focus { border-color:var(--accent); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; margin-top:14px; }
+  .row { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+  .muted { color:var(--dim); }
+  .tiny { font-size:12px; }
+  .num { font-weight:700; font-size:17px; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--dim); }
+  .b-run { color:var(--good); border-color:var(--good); }
+  .b-sched { color:var(--accent); border-color:var(--accent); }
+  .b-arr { color:var(--dim); }
+  .b-canc { color:var(--bad); border-color:var(--bad); }
+  .conf-HIGH { color:var(--good); } .conf-MEDIUM { color:var(--warn); } .conf-LOW { color:var(--bad); }
+  .delay-pos { color:var(--warn); font-weight:600; } .delay-neg { color:var(--good); font-weight:600; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-variant-numeric:tabular-nums; }
+  th { text-align:left; color:var(--dim); font-weight:500; font-size:12px; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td { padding:7px 8px; border-bottom:1px solid var(--line); }
+  tr.passed td { color:var(--dim); }
+  tr.next td { background:#1a2130; }
+  .pill-actual { color:var(--good); } .pill-op { color:var(--warn); } .pill-sched { color:var(--dim); }
+  .obs { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .obs .chip { background:#101623; border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:12.5px; }
+  a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  .clickable { cursor:pointer; }
+  .three { display:flex; gap:18px; margin-top:8px; flex-wrap:wrap; }
+  .three div span { display:block; }
+  .lbl { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.6px; }
+  .val { font-size:16px; font-weight:650; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>treno</h1>
+  <div class="sub">independent predictive realtime intelligence · Lombardy rail (POC) — scheduled vs operator vs ours</div>
+  <input id="q" type="search" placeholder="train number (e.g. 2174) — live runs below" autocomplete="off">
+  <div id="list"></div>
+  <div id="detail"></div>
+</div>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const fmtHm = (ms) => ms == null ? '—' : new Date(ms).toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' });
+const fmtAge = (sec) => sec == null ? '—' : (sec < 60 ? sec + 's ago' : Math.round(sec / 60) + 'm ago');
+const delayStr = (sec) => {
+  if (sec == null) return '—';
+  const sign = sec > 0 ? '+' : sec < 0 ? '−' : '';
+  const a = Math.abs(Math.round(sec / 60));
+  return sec === 0 ? 'on time' : sign + a + 'm';
+};
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function badge(st) {
+  const map = { running:['b-run','RUNNING'], scheduled:['b-sched','SCHEDULED'], arrived:['b-arr','ARRIVED'], cancelled:['b-canc','CANCELLED'], unknown:['','UNKNOWN'] };
+  const [cls, label] = map[st] || map.unknown;
+  return '<span class="badge ' + cls + '">' + label + '</span>';
+}
+
+async function loadList() {
+  const url = new URL('/api/trains', location.origin);
+  url.searchParams.set('limit', '25');
+  const res = await fetch(url); const rows = await res.json();
+  $('#list').innerHTML = rows.length ? rows.map((r) => renderRunCard(r)).join('') : '<div class="card muted">no live runs yet — collector warming up</div>';
+  bindCards();
+}
+
+function renderRunCard(r) {
+  const s = r.state || {};
+  const delayCls = (s.operatorDelaySec ?? 0) > 60 ? 'delay-pos' : 'delay-neg';
+  return '<div class="card clickable" data-id="' + r.id + '">' +
+    '<div class="row"><span class="num">' + esc(r.trainNumber) + '</span>' +
+    '<span class="muted">' + esc(s.origin?.name || r.origin || '?') + ' → ' + esc(s.destination?.name || r.destination || '?') + '</span>' +
+    badge(s.status) +
+    (s.operatorDelaySec != null ? '<span class="' + delayCls + '">' + delayStr(s.operatorDelaySec) + '</span>' : '') +
+    (s.confidence ? '<span class="tiny conf-' + s.confidence + '">' + s.confidence + '</span>' : '') +
+    '<span class="tiny muted" style="margin-left:auto">' + (r.updatedAt ? fmtAge(Math.round((Date.now() - r.updatedAt) / 1000)) : '') + '</span></div>' +
+    (s.latestLocation?.name ? '<div class="tiny muted">last: ' + esc(s.latestLocation.name) + (s.latestObservedAt ? ' · ' + fmtAge(Math.round((Date.now() - s.latestObservedAt) / 1000)) : '') + ' [' + esc(s.latestSource) + ']</div>' : '') +
+    '</div>';
+}
+
+function bindCards() {
+  document.querySelectorAll('.card.clickable').forEach((el) => {
+    el.addEventListener('click', () => loadDetail(el.dataset.id));
+  });
+}
+
+async function loadDetail(id) {
+  const res = await fetch('/api/trains/' + encodeURIComponent(id));
+  if (!res.ok) { $('#detail').innerHTML = '<div class="card">not found</div>'; return; }
+  const r = await res.json();
+  const s = r.state || {};
+  const stops = r.stops || [];
+  const now = Date.now();
+  let nextIdx = stops.findIndex((x) => x.actual_arr_epoch == null && x.cancelled !== 1);
+  const rows = stops.map((x, i) => {
+    const passedRow = x.actual_arr_epoch != null;
+    const cls = passedRow ? 'passed' : (i === nextIdx ? 'next' : '');
+    return '<tr class="' + cls + '"><td>' + esc(x.stopName || x.stop_id) + '</td>' +
+      '<td class="pill-sched">' + fmtHm(x.sched_arr_epoch) + '</td>' +
+      '<td class="pill-op">' + fmtHm(x.op_pred_arr_epoch) + '</td>' +
+      '<td class="pill-actual">' + fmtHm(x.actual_arr_epoch) + '</td>' +
+      '<td>' + (x.arr_delay_sec != null ? delayStr(x.arr_delay_sec) : '—') + '</td>' +
+      '<td>' + esc(x.platform_actual || '—') + '</td></tr>';
+  }).join('');
+  const dest = stops[stops.length - 1] || {};
+  $('#detail').innerHTML =
+    '<div class="card">' +
+    '<div class="row"><span class="num" style="font-size:22px">' + esc(r.trainNumber) + '</span>' +
+    '<span>' + esc(s.origin?.name || '?') + ' → ' + esc(s.destination?.name || '?') + '</span>' +
+    badge(s.status) + '<span class="tiny muted">' + esc(r.serviceDate) + ' · run ' + r.id + '</span></div>' +
+    '<div class="three">' +
+    '<div><span class="lbl">scheduled arrival</span><span class="val pill-sched">' + fmtHm(s.schedArrEpoch) + '</span></div>' +
+    '<div><span class="lbl">operator estimate</span><span class="val pill-op">' + fmtHm(s.destinationOperatorEta) + '</span></div>' +
+    '<div><span class="lbl">our estimate (v0)</span><span class="val">' + fmtHm(s.destinationOperatorEta) + '</span></div>' +
+    '<div><span class="lbl">confidence</span><span class="val conf-' + esc(s.confidence || '') + '">' + esc(s.confidence || '—') + '</span></div>' +
+    '</div>' +
+    '<div class="obs">' +
+    (s.latestLocation?.name ? '<span class="chip">last observed: <b>' + esc(s.latestLocation.name) + '</b>' + (s.latestObservedAt ? ' · ' + fmtAge(Math.round((now - s.latestObservedAt) / 1000)) : '') + ' · ' + esc(s.latestSource || '') + (s.latestLocation?.kind === 'reporting_point' ? ' · reporting point' : '') + '</span>' : '') +
+    (s.operatorDelaySec != null ? '<span class="chip">operator delay: ' + delayStr(s.operatorDelaySec) + '</span>' : '') +
+    (s.sourceDelaySpreadSec != null ? '<span class="chip">source spread: ' + Math.round(s.sourceDelaySpreadSec / 60) + 'm</span>' : '') +
+    Object.entries(s.sources || {}).map(([src, o]) => '<span class="chip">' + src + ': ' + (o.delaySec != null ? delayStr(o.delaySec) : 'n/d') + ' · age ' + fmtAge(o.ageSec) + '</span>').join('') +
+    '</div>' +
+    '<table><thead><tr><th>stop</th><th>scheduled</th><th>operator</th><th>actual</th><th>delay</th><th>plat</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<div class="tiny muted" style="margin-top:10px">v0 passthrough model: our estimate = operator ETA until the benchmark shows we can beat it. Sources: MIA + ViaggiaTreno, fused with per-source provenance.</div>' +
+    '</div>';
+  $('#list').innerHTML = '';
+}
+
+$('#q').addEventListener('keydown', async (ev) => {
+  if (ev.key !== 'Enter') return;
+  const v = ev.target.value.trim();
+  if (v === '') return;
+  const res = await fetch('/api/trains?q=' + encodeURIComponent(v) + '&limit=1');
+  const rows = await res.json();
+  if (rows.length) loadDetail(String(rows[0].id));
+  else $('#detail').innerHTML = '<div class="card muted">no run found for ' + esc(v) + '</div>';
+});
+
+loadList();
+setInterval(loadList, 10000);
+</script>
+</body>
+</html>

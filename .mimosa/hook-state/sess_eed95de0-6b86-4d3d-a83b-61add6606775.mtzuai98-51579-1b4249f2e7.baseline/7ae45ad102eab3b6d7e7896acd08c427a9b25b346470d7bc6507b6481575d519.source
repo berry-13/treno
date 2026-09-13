@@ -1,0 +1,33 @@
+{
+  "name": "treno",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Predictive realtime transit intelligence for Italian trains (see GOAL.md)",
+  "workspaces": [
+    "packages/*"
+  ],
+  "imports": {
+    "#core/*": "./packages/core/src/*",
+    "#gtfs/*": "./packages/gtfs/src/*",
+    "#providers/*": "./packages/providers/src/*",
+    "#storage/*": "./packages/storage/src/*",
+    "#collector/*": "./packages/collector/src/*"
+  },
+  "scripts": {
+    "gtfs:load": "tsx packages/gtfs/src/cli.ts",
+    "collector": "tsx packages/collector/src/index.ts",
+    "api": "tsx packages/api/src/server.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "fflate": "^0.8.2",
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

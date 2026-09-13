@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "#core/*": ["packages/core/src/*"],
+      "#gtfs/*": ["packages/gtfs/src/*"],
+      "#providers/*": ["packages/providers/src/*"],
+      "#storage/*": ["packages/storage/src/*"],
+      "#collector/*": ["packages/collector/src/*"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "apps/**/*.ts"]
+}

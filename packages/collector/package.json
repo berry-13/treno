@@ -1,0 +1,5 @@
+{
+  "name": "@treno/collector",
+  "private": true,
+  "type": "module"
+}

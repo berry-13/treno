@@ -200,33 +200,36 @@ struct MapStationsView: View {
             if stations.isEmpty {
                 ProgressView().tint(.tPrimary).frame(maxHeight: .infinity)
             }
-
-            if let sel = selection {
-                VStack(spacing: 10) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(sel.name).font(.system(size: 17, weight: .bold))
-                            Text("\(sel.depCount) departures today")
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.tMuted)
-                        }
-                        Spacer()
-                        Button {
-                            onSelect(sel)
-                        } label: {
-                            Text("Choose")
-                                .font(.system(size: 14, weight: .bold))
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 9)
-                        }
-                        .buttonStyle(.glass)
-                        .tint(.tPrimary)
-                    }
+        }
+        // native bottom sheet: system spring entrance, system rounded corners,
+        // grabber + drag-to-dismiss — no custom card drawing
+        .sheet(item: $selection) { sel in
+            VStack(spacing: 16) {
+                VStack(spacing: 4) {
+                    Text(sel.name)
+                        .font(.system(size: 19, weight: .bold))
+                        .foregroundStyle(.tFg)
+                    Text("\(sel.depCount) departures today")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.tMuted)
                 }
-                .padding(16)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .padding(16)
+                Button {
+                    onSelect(sel)
+                } label: {
+                    Text("Choose")
+                        .font(.system(size: 15, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                }
+                .buttonStyle(.glass)
+                .tint(.tPrimary)
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 20)
+            .presentationDetents([.height(200)])
+            .presentationBackground(.thinMaterial)
+            .presentationDragIndicator(.visible)
         }
         .overlay(alignment: .topLeading) {
             Button {

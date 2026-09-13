@@ -23,6 +23,20 @@ export function secondsIntoServiceDay(serviceDate: string, nowMs = Date.now()): 
   return Math.round((nowMs - romeWallToEpoch(serviceDate, 0)) / 1000);
 }
 
+/**
+ * trip_short_name in this feed is "{line} - {number}" (e.g. "RE_11 - 2174");
+ * providers are addressed by the bare train number.
+ */
+export function bareTrainNumber(tripShortName: string | null): string | null {
+  if (tripShortName == null) return null;
+  if (tripShortName.includes(' - ')) {
+    const parts = tripShortName.split(' - ');
+    const last = parts[parts.length - 1]!.trim();
+    return last !== '' ? last : tripShortName;
+  }
+  return tripShortName;
+}
+
 export function discoverRuns(
   db: Db,
   opts: { maxRuns: number; lookaheadMin: number; graceMin: number },
@@ -36,16 +50,19 @@ export function discoverRuns(
     const nowSec = secondsIntoServiceDay(serviceDate, nowMs);
     const trips = activeTripsOnDate(db, serviceDate);
     for (const t of trips) {
+      if (t.route_type != null && t.route_type !== 2) continue; // rail only for now
       if (t.dep_sec == null) continue;
+      const number = bareTrainNumber(t.train_number);
+      if (number == null) continue;
       const depWindowOk = t.dep_sec <= nowSec + opts.lookaheadMin * 60;
       const arrOk = t.arr_sec == null || nowSec <= t.arr_sec + opts.graceMin * 60;
       if (!depWindowOk || !arrOk) continue;
-      const key = serviceDate + '|' + (t.train_number ?? t.trip_id);
+      const key = serviceDate + '|' + number;
       if (found.has(key)) continue;
       const runId = ensureRun(db, {
         operator: 'TRENORD',
         serviceDate,
-        trainNumber: t.train_number ?? t.trip_id,
+        trainNumber: number,
         originStopId: t.origin_stop_id,
         schedDepSec: t.dep_sec,
         destinationStopId: t.destination_stop_id,
@@ -56,7 +73,7 @@ export function discoverRuns(
       });
       found.set(key, {
         runId,
-        trainNumber: t.train_number ?? t.trip_id,
+        trainNumber: number,
         serviceDate,
         schedDepEpoch: romeWallToEpoch(serviceDate, t.dep_sec),
         schedArrEpoch: t.arr_sec != null ? romeWallToEpoch(serviceDate, t.arr_sec) : null,

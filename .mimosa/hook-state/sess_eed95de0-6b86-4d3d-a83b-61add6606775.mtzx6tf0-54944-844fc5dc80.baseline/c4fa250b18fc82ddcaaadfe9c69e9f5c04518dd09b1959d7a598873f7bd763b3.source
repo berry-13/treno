@@ -91,12 +91,14 @@ export function hmsToSeconds(hms: string | null | undefined): number | null {
   return h * 3600 + mi * 60 + s;
 }
 
-/** seconds since midnight → "HH:MM:SS" (hours may exceed 23). */
+/** seconds since midnight → "HH:MM:SS" (hours may exceed 23; negatives render with sign). */
 export function secondsToHms(sec: number | null | undefined): string | null {
   if (sec == null) return null;
-  const h = Math.floor(sec / 3600), mi = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const sign = sec < 0 ? '-' : '';
+  const a = Math.abs(Math.round(sec));
+  const h = Math.floor(a / 3600), mi = Math.floor((a % 3600) / 60), s = a % 60;
   const hh = String(h).padStart(2, '0'), mm = String(mi).padStart(2, '0'), ss = String(s).padStart(2, '0');
-  return hh + ':' + mm + ':' + ss;
+  return sign + hh + ':' + mm + ':' + ss;
 }
 
 /** Rome wall-clock "HH:MM:SS" on a service date, with possible >24h GTFS values, → epoch ms. */

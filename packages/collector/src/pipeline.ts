@@ -66,22 +66,44 @@ export function ingestSnapshot(db: Db, s: ProviderTrainSnapshot, meta: IngestMet
     });
   }
 
-  const gtfsStops = getRows<{ stop_id: string; stop_sequence: number; sched_arr: number | null; sched_dep: number | null }>(
+  const gtfsStops = getRows<{ stop_id: string; stop_sequence: number; sched_arr: number | null; sched_dep: number | null; stop_name: string | null }>(
     db,
-    `SELECT st.stop_id, st.stop_sequence, st.arrival_sec AS sched_arr, st.departure_sec AS sched_dep
-     FROM gtfs_stop_times st WHERE st.trip_id = (SELECT gtfs_trip_id FROM train_runs WHERE id=?) ORDER BY st.stop_sequence ASC`,
+    `SELECT st.stop_id, st.stop_sequence, st.arrival_sec AS sched_arr, st.departure_sec AS sched_dep, g.stop_name
+     FROM gtfs_stop_times st LEFT JOIN gtfs_stops g ON g.stop_id = st.stop_id
+     WHERE st.trip_id = (SELECT gtfs_trip_id FROM train_runs WHERE id=?) ORDER BY st.stop_sequence ASC`,
     [runId],
   );
   const schedByStop = new Map(gtfsStops.map((g) => [g.stop_id, g]));
+  // Canonical stop identity v1 (GOAL.md §81): RFI/VT station codes do not
+  // always coincide with Trenord GTFS codes for the same physical station —
+  // alias any provider stop unknown to GTFS onto the trip's GTFS stop with a
+  // matching normalized name.
+  const gtfsIds = new Set(gtfsStops.map((g) => g.stop_id));
+  const nameKey = (n: string | null | undefined): string | null =>
+    n == null ? null : n.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const gtfsByName = new Map<string, string>();
+  for (const g of gtfsStops) {
+    const k = nameKey(g.stop_name);
+    if (k && !gtfsByName.has(k)) gtfsByName.set(k, g.stop_id);
+  }
+  const aliasStopId = (stop: ProviderStopEvent): string | null => {
+    if (!stop.stopId) return null;
+    if (gtfsIds.has(stop.stopId)) return stop.stopId;
+    const byName = nameKey(stop.stopName);
+    const aliased = (byName != null ? gtfsByName.get(byName) : undefined) ?? null;
+    if (aliased) return aliased;
+    return stop.stopId;
+  };
 
   for (const st of s.stops) {
-    if (!st.stopId) continue;
-    const g = schedByStop.get(st.stopId);
+    const stopId = aliasStopId(st);
+    if (!stopId) continue;
+    const g = schedByStop.get(stopId);
     const schedArrEpoch = st.schedArrEpoch ?? (g?.sched_arr != null ? romeWallToEpoch(s.serviceDate, g.sched_arr) : null);
     const schedDepEpoch = st.schedDepEpoch ?? (g?.sched_dep != null ? romeWallToEpoch(s.serviceDate, g.sched_dep) : null);
     upsertStopEvent(db, {
       runId,
-      stopId: st.stopId,
+      stopId,
       stopSequence: st.stopSequence ?? g?.stop_sequence ?? null,
       schedArrEpoch,
       schedDepEpoch,
@@ -98,7 +120,7 @@ export function ingestSnapshot(db: Db, s: ProviderTrainSnapshot, meta: IngestMet
       source: s.source,
     });
     if (st.actualArrEpoch != null) {
-      fillPredictionOutcomes(db, runId, st.stopId, st.actualArrEpoch);
+      fillPredictionOutcomes(db, runId, stopId, st.actualArrEpoch);
     }
   }
 

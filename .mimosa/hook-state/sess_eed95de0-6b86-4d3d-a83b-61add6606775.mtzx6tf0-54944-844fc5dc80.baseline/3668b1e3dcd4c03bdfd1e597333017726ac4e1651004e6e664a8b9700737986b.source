@@ -147,6 +147,7 @@ interface StopEventRow {
   sched_arr_epoch: number | null;
   op_pred_arr_epoch: number | null;
   actual_arr_epoch: number | null;
+  actual_dep_epoch: number | null;
   arr_delay_sec: number | null;
   platform_actual: string | null;
   cancelled: number | null;
@@ -173,7 +174,7 @@ export function fuseRunState(db: Db, run: RunRecord): FusedState {
   const now = Date.now();
   const events = getRows<StopEventRow>(
     db,
-    'SELECT stop_id, stop_sequence, sched_arr_epoch, op_pred_arr_epoch, actual_arr_epoch, arr_delay_sec, platform_actual, cancelled FROM train_stop_events WHERE run_id=? ORDER BY stop_sequence ASC, sched_arr_epoch ASC',
+    'SELECT stop_id, stop_sequence, sched_arr_epoch, op_pred_arr_epoch, actual_arr_epoch, actual_dep_epoch, arr_delay_sec, platform_actual, cancelled FROM train_stop_events WHERE run_id=? ORDER BY stop_sequence ASC, sched_arr_epoch ASC',
     [run.id],
   );
   const latestPerSource = new Map<string, ObsRow>();
@@ -197,8 +198,7 @@ export function fuseRunState(db: Db, run: RunRecord): FusedState {
   }
   const spread = delays.length >= 2 ? Math.max(...delays) - Math.min(...delays) : null;
 
-  const passed = events.filter((e) => e.actual_arr_epoch != null || e.actual_dep_epoch != null || (e.arr_delay_sec != null && e.cancelled !== 1));
-  const previousStopRow = passed.length > 0 ? passed[passed.length - 1]! : null;
+  const passed = events.filter((e) => e.actual_arr_epoch != null || e.actual_dep_epoch != null);  const previousStopRow = passed.length > 0 ? passed[passed.length - 1]! : null;
   const upcoming = events.filter((e) => e.actual_arr_epoch == null && e.cancelled !== 1 && (e.sched_arr_epoch == null || e.sched_arr_epoch >= (previousStopRow?.actual_arr_epoch ?? 0)));
   const nextStopRow = upcoming[0] ?? null;
   const destEvent = events.length > 0 ? events[events.length - 1]! : null;
@@ -206,14 +206,16 @@ export function fuseRunState(db: Db, run: RunRecord): FusedState {
   const schedArrEpoch = run.sched_arr_epoch ?? destEvent?.sched_arr_epoch ?? null;
   const destOpEta = destEvent?.op_pred_arr_epoch ?? null;
 
-  // status
+  // status: provider-native codes take precedence (MIA: N/V/P/A/C; VT: PG/PP/ST)
   let status: FusedState['status'] = 'unknown';
   const allArrived = events.length > 0 && events.every((e) => e.actual_arr_epoch != null || e.cancelled === 1);
   const anyCancelledFlag = events.some((e) => e.cancelled === 1);
   const depEpoch = run.sched_dep_epoch;
-  if (anyCancelledFlag) status = 'cancelled';
-  else if (allArrived) status = 'arrived';
-  else if (freshest?.status === 'V' || freshest?.status === 'P' || passed.length > 0) status = 'running';
+  const obsStatus = freshest?.status ?? null;
+  if (anyCancelledFlag || obsStatus === 'C' || obsStatus === 'ST') status = 'cancelled';
+  else if (allArrived || obsStatus === 'A') status = 'arrived';
+  else if (obsStatus === 'V' || passed.length > 0) status = 'running';
+  else if (obsStatus === 'N' || obsStatus === 'PG') status = 'scheduled';
   else if (depEpoch != null && now < depEpoch) status = 'scheduled';
   else if (depEpoch != null) status = 'running';
 

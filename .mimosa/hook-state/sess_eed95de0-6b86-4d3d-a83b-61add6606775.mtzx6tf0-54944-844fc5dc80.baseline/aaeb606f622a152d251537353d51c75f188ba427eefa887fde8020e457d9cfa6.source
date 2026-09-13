@@ -141,7 +141,7 @@ export function loadGtfsZip(db: Db, zipBytes: Uint8Array): LoadResult {
           r[iName!] ?? null,
           iLat != null ? Number(r[iLat]) : null,
           iLon != null ? Number(r[iLon]) : null,
-          iUrl != null ? r[iUrl] : null,
+          iUrl != null ? (r[iUrl] ?? null) : null,
         ]);
       }
       counts.stops = t.rows.length;
@@ -153,9 +153,9 @@ export function loadGtfsZip(db: Db, zipBytes: Uint8Array): LoadResult {
       for (const r of t.rows) {
         runStmt(stmt, [
           r[iId!] ?? '',
-          iAg != null ? r[iAg] : null,
-          iSn != null ? r[iSn] : null,
-          iLn != null ? r[iLn] : null,
+          iAg != null ? (r[iAg] ?? null) : null,
+          iSn != null ? (r[iSn] ?? null) : null,
+          iLn != null ? (r[iLn] ?? null) : null,
           iTy != null ? Number(r[iTy]) : null,
         ]);
       }
@@ -168,7 +168,7 @@ export function loadGtfsZip(db: Db, zipBytes: Uint8Array): LoadResult {
       for (const r of t.rows) {
         const tripId = r[iId!] ?? '';
         const serviceId = r[iSvc!] ?? '';
-        runStmt(stmt, [tripId, r[iRoute!] ?? null, serviceId, iSn != null ? r[iSn] : null]);
+        runStmt(stmt, [tripId, r[iRoute!] ?? null, serviceId, iSn != null ? (r[iSn] ?? null) : null]);
         const v = parseValidity(serviceId);
         validities.set(tripId, { tripId, from: v.from, to: v.to });
       }

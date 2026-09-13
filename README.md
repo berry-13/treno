@@ -3,30 +3,61 @@
 Predictive realtime transit intelligence for Italian trains — a "Flighty for
 public transport". Full product specification: [GOAL.md](GOAL.md).
 
+**Native iOS client (primary):** `apps/ios` — a SwiftUI app built on the iOS 26
+Liquid Glass design (`glassEffect`, `GlassEffectContainer`, glass buttons,
+background extension). See below for building/running it.
+
 **What this is right now (POC):** a data collection + fusion pipeline for
 Lombardy rail that polls the Trenord MIA backend and ViaggiaTreno/RFI for every
 train running right now, resolves them against the canonical Trenord GTFS
 schedule into stable run identities, stores every raw payload for later
 reprocessing, fuses per-source observations into a live train state with
-explicit provenance and confidence, and serves it over HTTP with a minimal web
-UI. The prediction model is the honest v0 baseline (our ETA = operator ETA) so
-that benchmarking can start immediately.
+explicit provenance and confidence, and serves it to the iOS app (and a debug
+web page) over HTTP. The prediction model is the honest v0 baseline
+(our ETA = operator ETA) so that benchmarking can start immediately.
 
-## Quickstart
+## Quickstart (backend)
 
 ```bash
 npm install
 npm run gtfs:load     # download + parse canonical Trenord GTFS into SQLite
 npm run collector     # start the polling collector (runs forever)
-npm run api           # serve API + web UI on http://127.0.0.1:8787
+npm run api           # serve API on http://127.0.0.1:8787 (iOS app + web UI)
 ```
 
 Or use the helpers:
 
 ```bash
-bin/start.sh          # start collector + api in background (pids in data/run.pids)
-bin/stop.sh           # stop them
+bin/start.sh          # start collector + api in background, verify health
+bin/stop.sh           # stop them (kills process trees, not just wrappers)
 ```
+
+## The iOS app (apps/ios)
+
+SwiftUI, iOS 26.0+, Liquid Glass throughout: glass cards for runs and sections,
+glass toolbar buttons and search field, `backgroundExtensionEffect` scrolling,
+dark Flighty-style board. Features: live runs board with provider health,
+search, train page with the three time levels (Scheduled / Operator / Ours),
+confidence, per-source observation chips with ages and reporting-point
+locations, and the full stop timeline (passed dimmed, next highlighted).
+
+```bash
+cd apps/ios
+xcodegen generate        # only after adding files (project.yml is the source of truth)
+open Treno.xcodeproj     # run on the simulator (⌘R)
+```
+
+CLI equivalent:
+
+```bash
+xcodebuild -project Treno.xcodeproj -scheme Treno \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
+```
+
+- The simulator reaches the API at `http://127.0.0.1:8787` automatically.
+- A real device on the same Wi-Fi: in-app Settings (gear icon) → point at your
+  Mac's LAN address, e.g. `http://192.168.1.20:8787`.
+- Demo deep link: `xcrun simctl launch booted com.treno.Treno --train 699`.
 
 Useful collector invocations:
 
@@ -64,8 +95,9 @@ Monorepo layout (npm workspaces, TypeScript ESM, no build step — run with tsx)
 | `packages/providers` | MIA + ViaggiaTreno clients; provider-neutral snapshot model (§24) |
 | `packages/storage` | normalized schema (§30-33), zstd raw snapshot store (§28-29), run registry |
 | `packages/collector` | adaptive polling scheduler (§36), ingest pipeline, state fusion (§10) |
-| `packages/api` | HTTP API + static web UI |
-| `apps/web` | single-file UI: scheduled vs operator vs ours, provenance, confidence |
+| `packages/api` | HTTP API + static web debug page |
+| `apps/web` | single-file debug page (scheduled vs operator vs ours) |
+| `apps/ios` | **native iOS client** — SwiftUI + Liquid Glass (iOS 26) |
 
 ## Data layout (all under `data/`, gitignored)
 
@@ -137,6 +169,11 @@ Next, in order:
   addressed by the bare number after `" - "`.
 - ViaggiaTreno autocomplete keys are `{number}-{originCode}-{epochMs}` where
   the epoch is the Rome **midnight of the service date**, not the departure.
+- **Station code spaces differ**: Trenord GTFS and ViaggiaTreno agree on
+  Ferrovienord `S0xxxx` codes but NOT on RFI stations (VT: Brescia `S01717`;
+  GTFS uses a different id). The ingest pipeline aliases unmapped provider
+  stops onto the trip's GTFS stops by normalized name (canonical stop
+  identity v1, §81) — a real cross-provider stop registry is future work.
 - The GTFS feed uses exception-only calendars (`calendar_dates.txt`, 385k rows,
   no `calendar.txt`); stop times are seconds-since-service-midnight and may
   exceed 86400.

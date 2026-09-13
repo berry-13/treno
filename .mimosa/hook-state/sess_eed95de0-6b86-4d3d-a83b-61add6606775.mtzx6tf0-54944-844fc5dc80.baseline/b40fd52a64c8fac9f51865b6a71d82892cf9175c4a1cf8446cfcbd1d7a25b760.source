@@ -8,6 +8,7 @@ import { getRow, getRows, type Db } from '#core/db.ts';
 export interface ActiveTrip {
   trip_id: string;
   route_id: string | null;
+  route_type: number | null;
   train_number: string | null;
   origin_stop_id: string | null;
   destination_stop_id: string | null;
@@ -31,10 +32,11 @@ function ymdToGtfsDate(ymd: string): string {
 export function activeTripsOnDate(db: Db, ymd: string): ActiveTrip[] {
   const rows = getRows<ActiveTrip>(
     db,
-    `SELECT s.trip_id, s.route_id, s.train_number, s.origin_stop_id, s.destination_stop_id,
+    `SELECT s.trip_id, s.route_id, r.route_type, s.train_number, s.origin_stop_id, s.destination_stop_id,
        s.dep_sec, s.arr_sec, s.stop_count, s.valid_from, s.valid_to
      FROM gtfs_trip_summaries s
      JOIN gtfs_trips t ON t.trip_id = s.trip_id
+     JOIN gtfs_routes r ON r.route_id = s.route_id
      JOIN gtfs_calendar_dates cd ON cd.service_id = t.service_id
      WHERE cd.date = ? AND cd.exception_type = 1`,
     [ymdToGtfsDate(ymd)],

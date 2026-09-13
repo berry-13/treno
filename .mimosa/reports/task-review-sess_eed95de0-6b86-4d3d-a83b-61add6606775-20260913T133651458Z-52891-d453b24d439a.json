@@ -1,0 +1,432 @@
+{
+  "schema_version": "mimosa-task-review/v2",
+  "run_id": "20260913T133651458Z-52891-d453b24d439a",
+  "run_status": "inconclusive",
+  "errors": [
+    {
+      "stage": "baseline-read",
+      "target": "package-lock.json",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    }
+  ],
+  "coverage": {
+    "schema_version": "mimosa-hook-coverage/v1",
+    "status": "partial",
+    "scope": "hook_observed_diff",
+    "baseline": {
+      "complete": true,
+      "captured_files": 35,
+      "candidate_limit": 5000,
+      "truncated": false,
+      "enumeration_error_count": 0,
+      "snapshot_error_count": 0,
+      "compensated_target_count": 17
+    },
+    "change_tracking": {
+      "touched_observed": 17,
+      "touched_retained": 17,
+      "truncated": false,
+      "bash_mutation": true,
+      "bash_discovered": 18,
+      "bash_discovery_limit": 80,
+      "bash_discovery_truncated": false
+    },
+    "candidates": {
+      "eligible_files": 18,
+      "selected_files": 18,
+      "limit": 20,
+      "truncated": false
+    },
+    "scanning": {
+      "required_files": 16,
+      "scanned_files": 16,
+      "skipped_files": 0,
+      "failed_files": 0,
+      "project_checks_required": 1,
+      "project_checks_completed": 1
+    },
+    "notification": {
+      "eligible_findings": 0,
+      "detailed_findings": 0,
+      "detail_limit": 3,
+      "truncated": false
+    },
+    "reason_counts": {
+      "baseline_snapshot_unreadable": 1,
+      "project_check_failed": 1
+    },
+    "reasons": [
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "package-lock.json",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "package-lock.json",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      }
+    ],
+    "reasons_truncated": false
+  },
+  "generated_at": "2026-09-13T13:36:51.458Z",
+  "session_id": "sess_eed95de0-6b86-4d3d-a83b-61add6606775",
+  "target": ".",
+  "revision": "6bca1e5a647b38f07a52bc7ec64597ae525ce209",
+  "rules_version": "unavailable",
+  "diff_hash": "b1cc3297cef94c43bd9492354550a73b362fa42c83fb22ea237d796856178a40",
+  "diff": {
+    "algorithm": "sha256",
+    "changed_file_count": 18,
+    "changed_files": [
+      {
+        "file": "bin/start.sh",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 10
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "4a5654eac98bcb4d0c0777fcab8a78b99e66c35f2d0043bc2bbe43dfc04decb3"
+      },
+      {
+        "file": "bin/stop.sh",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 15
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "0ed169fa62f909aef2ce9c82ad1e0e3a0cea2e0c392ae643753fcb8551738282"
+      },
+      {
+        "file": "package-lock.json",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 636
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "d64df37d6f6b92bb41d33a8948573b8701063420c843f52e7f58dd5d33b29082"
+      },
+      {
+        "file": "packages/api/package.json",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 5
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "1680dd82c57d2d9563432774ecef7b1c84639f71e6d6399c86763e003da570b1"
+      },
+      {
+        "file": "packages/api/src/server.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 149
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "e07a756e425ad5b3a139861fb481ec36b8421e798be560a4d6224f66e2ad7b3f"
+      },
+      {
+        "file": "packages/collector/src/discover.ts",
+        "ranges": [
+          {
+            "start": 26,
+            "end": 39
+          },
+          {
+            "start": 53,
+            "end": 53
+          },
+          {
+            "start": 55,
+            "end": 56
+          },
+          {
+            "start": 60,
+            "end": 60
+          },
+          {
+            "start": 65,
+            "end": 65
+          },
+          {
+            "start": 76,
+            "end": 76
+          }
+        ],
+        "before_hash": "a7d4bc12a74747e8f01c21f6b397f3220871f9a7cff90eb5dd13f0a706fc3c01",
+        "after_hash": "0a59e6f3fc050e5d310d12160a9feca1fdc2f9184dfab96d4f8695a11fa46f62"
+      },
+      {
+        "file": "packages/collector/src/index.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 66
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "b523e8649da34b1e74b58ed43b63164eb6696960d84c39235655a04e2eb8fc2f"
+      },
+      {
+        "file": "packages/collector/src/pipeline.ts",
+        "ranges": [
+          {
+            "start": 150,
+            "end": 150
+          },
+          {
+            "start": 177,
+            "end": 177
+          },
+          {
+            "start": 201,
+            "end": 201
+          },
+          {
+            "start": 209,
+            "end": 209
+          },
+          {
+            "start": 214,
+            "end": 218
+          }
+        ],
+        "before_hash": "fe19d9adbb9fea2a35369bd7a687595fcdf1e2c81684f35b3e31cf924d31a062",
+        "after_hash": "e7484b78dc9cfadf48f5ccc573a2eb8a384a7e9bb1da29cf9f490adecf875525"
+      },
+      {
+        "file": "packages/collector/src/poller.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 348
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "16d40559702977adbe0a583bb55c1ed50d75254b69c36b9e36b87433a325ddb2"
+      },
+      {
+        "file": "packages/core/src/config.ts",
+        "ranges": [
+          {
+            "start": 18,
+            "end": 18
+          }
+        ],
+        "before_hash": "1863c3d08fd5b41ab3d5148d1f7bb9f502e60a90801eadec81d89f58114f87ba",
+        "after_hash": "875b901063c232126de1d4e9242a1861e3684cd9646a48c525967c959e174c80"
+      },
+      {
+        "file": "packages/core/src/db.ts",
+        "ranges": [
+          {
+            "start": 20,
+            "end": 20
+          },
+          {
+            "start": 25,
+            "end": 25
+          },
+          {
+            "start": 30,
+            "end": 30
+          },
+          {
+            "start": 35,
+            "end": 35
+          }
+        ],
+        "before_hash": "41683876ab622475d9c2119291d43ba553b1eeaac48269eac1c49f1c5139aa99",
+        "after_hash": "cf81ab523ae2994139940e291ea1cdb2cfe9a463f139a2af4eba54941e027702"
+      },
+      {
+        "file": "packages/core/src/time.ts",
+        "ranges": [
+          {
+            "start": 94,
+            "end": 94
+          },
+          {
+            "start": 97,
+            "end": 99
+          },
+          {
+            "start": 101,
+            "end": 101
+          }
+        ],
+        "before_hash": "cac3a01755df64b92eb06cc15fbc1d6d54c052b6edb7b9a75309f2541e6a9ae5",
+        "after_hash": "84ad2f52bce7cb8095565e7ddd4c93a530a3e38190d4eefe6de4b54b2683d53e"
+      },
+      {
+        "file": "packages/gtfs/src/loader.ts",
+        "ranges": [
+          {
+            "start": 144,
+            "end": 144
+          },
+          {
+            "start": 156,
+            "end": 158
+          },
+          {
+            "start": 171,
+            "end": 171
+          }
+        ],
+        "before_hash": "1e0995c2e939cef411dd581961c2642582e5246445385c1e86956d9c47ec0796",
+        "after_hash": "b8c5dce731c100f974225b371f48234e905c840cd97de3d4e397baa7a597b46d"
+      },
+      {
+        "file": "packages/gtfs/src/schedule.ts",
+        "ranges": [
+          {
+            "start": 11,
+            "end": 11
+          },
+          {
+            "start": 35,
+            "end": 35
+          },
+          {
+            "start": 39,
+            "end": 39
+          }
+        ],
+        "before_hash": "8b02e9cb69e17b0ef3a0b1b42ebc4f7a0baaf2526dfc6d1ee5ebcc51e919ea9f",
+        "after_hash": "0c67111a624bd666226ffa50ace79d4f2d0f47443fea512da466ca1a40d46836"
+      },
+      {
+        "file": "packages/providers/src/index.ts",
+        "ranges": [
+          {
+            "start": 5,
+            "end": 6
+          }
+        ],
+        "before_hash": "15d4bec6350ce937578592ea624a690f264e3dfbd16e308752e5d47b5fe17b41",
+        "after_hash": "039aa38a654f9191119a34bf12e9961e66455f3433a3c857223ff7517717a40a"
+      },
+      {
+        "file": "packages/providers/src/mia.ts",
+        "ranges": [
+          {
+            "start": 2,
+            "end": 5
+          },
+          {
+            "start": 118,
+            "end": 123
+          },
+          {
+            "start": 141,
+            "end": 141
+          }
+        ],
+        "before_hash": "88b27362edd59faed292197501e0e9b237fadc0ab40df38cdc483ad9c6fa97a6",
+        "after_hash": "080d4edf73cd9f47e65b95a14319ee1a2699c3f406cee403843aa8a6956d63f6"
+      },
+      {
+        "file": "packages/providers/src/vt.ts",
+        "ranges": [
+          {
+            "start": 18,
+            "end": 21
+          },
+          {
+            "start": 38,
+            "end": 38
+          },
+          {
+            "start": 120,
+            "end": 128
+          },
+          {
+            "start": 139,
+            "end": 140
+          }
+        ],
+        "before_hash": "db16a4cba7fa3743556d8a61d121d7112438540c4058621be81f01dcfddd1c28",
+        "after_hash": "dc24466e87ae5210380643de2e082f0cb6429765992addaca2ce859224b0ed0c"
+      },
+      {
+        "file": "packages/storage/src/observations.ts",
+        "ranges": [
+          {
+            "start": 48,
+            "end": 53
+          },
+          {
+            "start": 102,
+            "end": 102
+          }
+        ],
+        "before_hash": "66c8e868af6df4a828cc47769c27372db373df92d6fadcc1d473daf12243526d",
+        "after_hash": "5d3d64ca9ba13b5f3f363dfbbfcca447bd6db303f3403380dc40754f03d12196"
+      }
+    ]
+  },
+  "timing": {
+    "started_at": "2026-09-13T13:36:49.769Z",
+    "completed_at": "2026-09-13T13:36:51.458Z",
+    "duration_ms": 1689,
+    "measurement": "hook_wall_clock"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "model_calls": 0,
+    "measurement": "known-zero"
+  },
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "Stop",
+    "outcome": "partial/INCONCLUSIVE",
+    "latencyMs": 1689,
+    "peakMemoryBytes": 216219648,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 16,
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "finding_count": 0,
+  "rewake_finding_count": 0,
+  "evidence_boundary": {
+    "scan": "candidate",
+    "static_fix_verification": "observed_static_only",
+    "runtime_verification": "not_performed"
+  },
+  "finding_events": [],
+  "findings": [],
+  "artifacts": {
+    "immutable_report": ".mimosa/reports/task-review-sess_eed95de0-6b86-4d3d-a83b-61add6606775-20260913T133651458Z-52891-d453b24d439a.json",
+    "latest_report": ".mimosa/reports/task-review-sess_eed95de0-6b86-4d3d-a83b-61add6606775.json",
+    "history_summary": ".mimosa/history/run-20260913T133651458Z-52891-d453b24d439a.json"
+  }
+}

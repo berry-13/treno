@@ -1,8 +1,8 @@
 /**
- * Trenord MIA provider (GOAL.md §5.1). Undocumented backend; requires BOTH
- * `Accept: */*` and a descriptive User-Agent on every request (403 otherwise).
- * All optional fields may be entirely ABSENT from the JSON — never assume
- * presence; parse everything defensively.
+ * Trenord MIA provider (GOAL.md §5.1). Undocumented backend; requires BOTH an
+ * "Accept: ..." header and a descriptive User-Agent on every request (403
+ * otherwise). All optional fields may be entirely ABSENT from the JSON — never
+ * assume presence; parse everything defensively.
  *
  * Observed shape: top-level array; [0] = journey { date, dep_time, arr_time,
  * dep_station, arr_station, journey_list: [ { train, pass_list } ] }.
@@ -115,7 +115,12 @@ export function parseMiaTrain(raw: string): ProviderTrainSnapshot | null {
 
   const first = stops[0];
   const last = stops[stops.length - 1];
-  const actualTime = str(train.actual_time);
+  const actualTimeRaw = str(train.actual_time);
+  const observedAt = actualTimeRaw != null
+    ? (actualTimeRaw.includes('T') && Number.isFinite(Date.parse(actualTimeRaw))
+        ? Date.parse(actualTimeRaw)
+        : localHmsNearEpoch(serviceDate, actualTimeRaw, null))
+    : null;
   return {
     source: MIA_SOURCE,
     sourceKey: dateRaw + '|' + trainNumber,
@@ -133,7 +138,7 @@ export function parseMiaTrain(raw: string): ProviderTrainSnapshot | null {
     hasLiveInfo: bool(train.has_live_info),
     lastLocationId: str(train.actual_station_mir) ?? null,
     lastLocationName: str(train.actual_station) ?? null,
-    observedAt: actualTime != null ? localHmsNearEpoch(serviceDate, actualTime, null) : null,
+    observedAt,
     cancelled: train.suppression_type != null ? true : (stops.some((x) => x.cancelled === true) ? true : null),
     crowding: num(train.average_crowding),
     alerts: Array.isArray(train.alerts) ? train.alerts : [],

@@ -15,7 +15,7 @@ export interface Config {
   gtfsUrl: string;
 }
 
-const repoRoot = resolve(import.meta.dirname, '../../../..');
+const repoRoot = resolve(import.meta.dirname, '../../..');
 
 export function loadConfig(): Config {
   const dataDir = process.env.TRENO_DATA_DIR ?? join(repoRoot, 'data');

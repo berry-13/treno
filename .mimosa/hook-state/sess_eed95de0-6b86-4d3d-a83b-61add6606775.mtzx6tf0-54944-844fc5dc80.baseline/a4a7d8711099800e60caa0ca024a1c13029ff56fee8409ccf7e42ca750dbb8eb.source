@@ -45,9 +45,12 @@ export interface StopEventUpsert {
 }
 
 export function upsertStopEvent(db: Db, e: StopEventUpsert): void {
-  const seq = e.stopSequence ?? 0;
-  const existing = getRow<{ actual_arr_epoch: number | null; platform_actual: string | null }>(
-    db, 'SELECT actual_arr_epoch, platform_actual FROM train_stop_events WHERE run_id=? AND stop_id=? AND stop_sequence=?', [e.runId, e.stopId, seq]);
+  // Merge by (run_id, stop_id): different providers use different stop
+  // sequence conventions (MIA journey index vs VT progressivo), so the first
+  // writer's sequence becomes the row identity and later sources update it.
+  const existing = getRow<{ stop_sequence: number; actual_arr_epoch: number | null; platform_actual: string | null }>(
+    db, 'SELECT stop_sequence, actual_arr_epoch, platform_actual FROM train_stop_events WHERE run_id=? AND stop_id=?', [e.runId, e.stopId]);
+  const seq = existing?.stop_sequence ?? e.stopSequence ?? 0;
   // never regress an actual to null once known
   const actualArr = e.actualArrEpoch ?? existing?.actual_arr_epoch ?? null;
   const platformActual = e.platformActual ?? existing?.platform_actual ?? null;
@@ -96,7 +99,7 @@ export interface HealthUpdate {
 export function updateProviderHealth(db: Db, source: string, u: HealthUpdate): void {
   runStmt(
     db.prepare(`INSERT INTO provider_health(source, ok_count, err_count, last_ok_at, last_err_at, last_error, last_latency_ms, last_change_at, consecutive_errors, paused_until, state)
-VALUES(?,?,NULL,NULL,NULL,NULL,NULL,NULL,0,0,'UNKNOWN')
+VALUES(?,?,?,?,?,?,?,?,0,?,'UNKNOWN')
 ON CONFLICT(source) DO UPDATE SET
   ok_count=ok_count+excluded.ok_count,
   err_count=err_count+excluded.err_count,

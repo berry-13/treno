@@ -15,7 +15,10 @@ export const VT_BASE = 'http://www.viaggiatreno.it/infomobilita/resteasy/viaggia
 export const VT_PARSER_VERSION = 'vt-v1';
 
 function str(v: unknown): string | null {
-  return typeof v === 'string' && v.length > 0 ? v : null;
+  if (typeof v !== 'string') return null;
+  const trimmed = v.trim();
+  if (trimmed === '' || trimmed === '--' || trimmed === '0') return null; // VT placeholders
+  return v;
 }
 function num(v: unknown): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -32,6 +35,7 @@ function epoch(v: unknown): number | null {
 export interface VtTrainRef {
   trainNumber: string;
   originCode: string;
+  /** Rome-midnight epoch (ms) of the run's SERVICE DATE — not the departure time. */
   departureEpochMs: number;
   label: string | null;
 }
@@ -113,8 +117,15 @@ export function parseVtTrain(raw: string, ref: VtTrainRef): ProviderTrainSnapsho
 
   const first = stops[0];
   const last = stops[stops.length - 1];
-  const midnight = serviceDate + 'T00:00:00';
-  void midnight;
+  // ref.departureEpochMs is the Rome midnight of the service date, so the
+  // difference against the first stop's theoretical departure is exactly the
+  // seconds-since-service-midnight the canonical identity needs.
+  const schedDepSec = first?.schedDepEpoch != null
+    ? Math.round((first.schedDepEpoch - ref.departureEpochMs) / 1000)
+    : null;
+  const schedArrSec = last?.schedArrEpoch != null
+    ? Math.round((last.schedArrEpoch - ref.departureEpochMs) / 1000)
+    : null;
   return {
     source: VT_SOURCE,
     sourceKey: vtSourceKey(ref),
@@ -125,8 +136,8 @@ export function parseVtTrain(raw: string, ref: VtTrainRef): ProviderTrainSnapsho
     destinationStopId: last?.stopId ?? null,
     originStopName: first?.stopName ?? null,
     destinationStopName: last?.stopName ?? null,
-    schedDepSec: first?.schedDepEpoch != null ? Math.round((first.schedDepEpoch - ref.departureEpochMs) / 1000) + secondsSinceMidnightLocal(ref.departureEpochMs) : null,
-    schedArrSec: null,
+    schedDepSec,
+    schedArrSec,
     delaySeconds: topDelayMin != null ? Math.round(topDelayMin * 60) : null,
     status: str(t.tipoTreno),
     hasLiveInfo: t.oraUltimoRilevamento != null,
@@ -138,11 +149,6 @@ export function parseVtTrain(raw: string, ref: VtTrainRef): ProviderTrainSnapsho
     alerts: Array.isArray(t.compRitardo) ? t.compRitardo : [],
     stops,
   };
-}
-
-function secondsSinceMidnightLocal(epochMs: number): number {
-  const d = new Date(epochMs);
-  return d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds();
 }
 
 export function vtRelevantHash(s: ProviderTrainSnapshot): string {

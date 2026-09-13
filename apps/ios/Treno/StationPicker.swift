@@ -204,32 +204,10 @@ struct MapStationsView: View {
         // native bottom sheet: system spring entrance, system rounded corners,
         // grabber + drag-to-dismiss — no custom card drawing
         .sheet(item: $selection) { sel in
-            VStack(spacing: 16) {
-                VStack(spacing: 4) {
-                    Text(sel.name)
-                        .font(.system(size: 19, weight: .bold))
-                        .foregroundStyle(.tFg)
-                    Text("\(sel.depCount) departures today")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(.tMuted)
-                }
-                Button {
-                    onSelect(sel)
-                } label: {
-                    Text("Choose")
-                        .font(.system(size: 15, weight: .bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 13)
-                }
-                .buttonStyle(.glass)
-                .tint(.tPrimary)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
-            .padding(.bottom, 20)
-            .presentationDetents([.height(200)])
-            .presentationBackground(.thinMaterial)
-            .presentationDragIndicator(.visible)
+            StationSheet(station: sel, onSelect: onSelect)
+                .presentationDetents([.height(265)])
+                .presentationBackground(Color.tBg)
+                .presentationDragIndicator(.visible)
         }
         .overlay(alignment: .topLeading) {
             Button {
@@ -290,6 +268,77 @@ struct MapStationsView: View {
                     span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
                 ))
             }
+        }
+    }
+}
+
+// MARK: - station sheet (map place card)
+
+/// Apple-Maps-style place card: satellite snapshot of the station melting
+/// into the sheet, name beneath, full-width Choose at the bottom.
+private struct StationSheet: View {
+    let station: StationLite
+    let onSelect: (StationLite) -> Void
+
+    @State private var snapshot: Image?
+
+    var body: some View {
+        VStack(spacing: 14) {
+            snapshotView
+                .frame(height: 128)
+                .frame(maxWidth: .infinity)
+                .clipped()
+
+            Text(station.name)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(.tFg)
+                .padding(.horizontal, 20)
+
+            Button {
+                onSelect(station)
+            } label: {
+                Text("Choose")
+                    .font(.system(size: 15, weight: .bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+            }
+            .buttonStyle(.glass)
+            .tint(.tPrimary)
+            .padding(.horizontal, 20)
+        }
+        .padding(.top, 4)
+        .padding(.bottom, 20)
+        .background(Color.tBg)
+        .task { await loadSnapshot() }
+    }
+
+    @ViewBuilder
+    private var snapshotView: some View {
+        ZStack(alignment: .bottom) {
+            if let snapshot {
+                snapshot
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color.tElevated
+            }
+            // the image dissolves into the sheet going down
+            LinearGradient(
+                colors: [.clear, Color.tBg.opacity(0.55), Color.tBg],
+                startPoint: .init(x: 0.5, y: 0.25),
+                endPoint: .bottom
+            )
+        }
+    }
+
+    private func loadSnapshot() async {
+        guard let lat = station.lat, let lon = station.lon else { return }
+        let options = MKMapSnapshotter.Options()
+        options.camera = MKMapCamera(lookingAtCenter: CLLocationCoordinate2D(latitude: lat, longitude: lon), fromDistance: 900, pitch: 0, heading: 0)
+        options.mapType = .satellite
+        options.size = CGSize(width: 480, height: 256)
+        if let shot = try? await MKMapSnapshotter(options: options).start() {
+            snapshot = Image(uiImage: shot.image)
         }
     }
 }

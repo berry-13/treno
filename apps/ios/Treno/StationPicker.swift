@@ -322,23 +322,52 @@ private struct StationSheet: View {
             } else {
                 Color.tElevated
             }
-            // the image dissolves into the sheet going down
-            LinearGradient(
-                colors: [.clear, Color.tBg.opacity(0.55), Color.tBg],
-                startPoint: .init(x: 0.5, y: 0.25),
-                endPoint: .bottom
-            )
+            // two-stage dissolve: the photo first frosts over progressively,
+            // then the surface color completes it — no seam at the bottom
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .mask(
+                    LinearGradient(stops: [
+                        .init(color: .clear, location: 0.30),
+                        .init(color: .black, location: 0.95),
+                    ], startPoint: .top, endPoint: .bottom)
+                )
+            LinearGradient(stops: [
+                .init(color: .clear, location: 0.34),
+                .init(color: Color.tBg.opacity(0.9), location: 0.78),
+                .init(color: Color.tBg, location: 1.0),
+            ], startPoint: .top, endPoint: .bottom)
         }
     }
 
     private func loadSnapshot() async {
         guard let lat = station.lat, let lon = station.lon else { return }
+        let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        // ground-level Look Around photo, like an Apple Maps place card;
+        // satellite from above as fallback where Look Around has no coverage
+        if let image = await lookAroundImage(at: coordinate) {
+            snapshot = image
+        } else if let image = await satelliteImage(at: coordinate) {
+            snapshot = image
+        }
+    }
+
+    private func lookAroundImage(at coordinate: CLLocationCoordinate2D) async -> Image? {
+        let request = MKLookAroundSceneRequest(coordinate: coordinate)
+        guard let scene = try? await request.scene else { return nil }
+        let options = MKLookAroundSnapshotter.Options()
+        options.size = CGSize(width: 480, height: 300)
+        let snapshotter = MKLookAroundSnapshotter(scene: scene, options: options)
+        guard let shot = try? await snapshotter.snapshot else { return nil }
+        return Image(uiImage: shot.image)
+    }
+
+    private func satelliteImage(at coordinate: CLLocationCoordinate2D) async -> Image? {
         let options = MKMapSnapshotter.Options()
-        options.camera = MKMapCamera(lookingAtCenter: CLLocationCoordinate2D(latitude: lat, longitude: lon), fromDistance: 900, pitch: 0, heading: 0)
+        options.camera = MKMapCamera(lookingAtCenter: coordinate, fromDistance: 900, pitch: 0, heading: 0)
         options.mapType = .satellite
         options.size = CGSize(width: 480, height: 256)
-        if let shot = try? await MKMapSnapshotter(options: options).start() {
-            snapshot = Image(uiImage: shot.image)
-        }
+        guard let shot = try? await MKMapSnapshotter(options: options).start() else { return nil }
+        return Image(uiImage: shot.image)
     }
 }

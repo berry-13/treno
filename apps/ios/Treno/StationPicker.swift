@@ -193,6 +193,9 @@ struct MapStationsView: View {
                 }
             }
             .mapStyle(.standard(pointsOfInterest: .excludingAll))
+            // MapKit's compass can't be repositioned and owns the top-right —
+            // we draw our own chrome instead
+            .mapControlVisibility(.hidden)
 
             if stations.isEmpty {
                 ProgressView().tint(.tPrimary).frame(maxHeight: .infinity)
@@ -231,27 +234,28 @@ struct MapStationsView: View {
             } label: {
                 Image(systemName: locating ? "location.fill" : "location")
                     .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.tPrimary)
                     .frame(width: 42, height: 42)
+                    .glassEffect(.clear.interactive(), in: Circle())
             }
-            .buttonStyle(.glass)
-            .tint(.tPrimary)
+            .buttonStyle(.plain)
             .disabled(locating)
             .padding(.leading, 16)
             .padding(.top, 10)
         }
         .overlay(alignment: .topTrailing) {
-            // sits below MapKit's compass, which owns the top-right corner
             Button {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.92))
                     .frame(width: 42, height: 42)
+                    .glassEffect(.clear.interactive(), in: Circle())
             }
-            .buttonStyle(.glass)
-            .tint(.white)
+            .buttonStyle(.plain)
             .padding(.trailing, 16)
-            .padding(.top, 70)
+            .padding(.top, 10)
         }
         .preferredColorScheme(.dark)
         .tint(.tPrimary)

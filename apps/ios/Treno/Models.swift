@@ -43,6 +43,20 @@ struct TrainState: Codable, Hashable {
     var nextStop: StopRef?
     var destinationOperatorEta: Double?
     var confidence: String?
+    var ourEstimate: OurEstimate?
+    var quality: [String]?
+}
+
+struct OurEstimate: Codable, Hashable {
+    var p10: Double
+    var p50: Double
+    var p90: Double
+    var modelVersion: String?
+    var confidence: Double?
+    var recoverySec: Int?
+    var operatorWeight: Double?
+    var statsCoverage: Double?
+    var corridorAdjustSec: Int?
 }
 
 struct Place: Codable, Hashable {
@@ -81,12 +95,46 @@ struct TrainDetail: Codable {
     let state: TrainState?
     let stops: [DetailStop]?
     let recentObservations: [ObservationRow]?
+    let latestPrediction: LatestPrediction?
+    let connections: [ConnectionOption]?
 
     enum CodingKeys: String, CodingKey {
-        case id, trainNumber, serviceDate, state, stops, recentObservations
+        case id, trainNumber, serviceDate, state, stops, recentObservations, latestPrediction, connections
         case originStop = "origin"
         case destinationStop = "destination"
     }
+}
+
+struct LatestPrediction: Codable, Hashable {
+    let modelVersion: String
+    let generatedAt: Double?
+    let operatorEtaEpoch: Double?
+    let ourP10: Double?
+    let ourP50: Double?
+    let ourP90: Double?
+    let confidence: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case confidence
+        case modelVersion = "model_version"
+        case generatedAt = "generated_at"
+        case operatorEtaEpoch = "operator_eta_epoch"
+        case ourP10 = "our_p10"
+        case ourP50 = "our_p50"
+        case ourP90 = "our_p90"
+    }
+}
+
+struct ConnectionOption: Codable, Hashable, Identifiable {
+    let trainNumber: String
+    let line: String?
+    let destinationName: String?
+    let depEpoch: Double
+    let transferSec: Int
+    let probability: Double
+    let operatorDelaySec: Int?
+
+    var id: String { trainNumber + "@" + String(depEpoch) }
 }
 
 /// Raw DB rows come through snake_cased.

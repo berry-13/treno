@@ -7,4 +7,6 @@ nohup npx tsx packages/collector/src/index.ts >> data/logs/collector.out 2>&1 &
 echo "collector $!" > data/run.pids
 nohup npx tsx packages/api/src/server.ts >> data/logs/api.out 2>&1 &
 echo "api $!" >> data/run.pids
+sleep 2
+curl -sS -m 5 http://127.0.0.1:8787/api/health >/dev/null 2>&1 && echo "api healthy on :8787" || echo "api not yet responding (check data/logs/api.out)"
 echo "started:"; cat data/run.pids

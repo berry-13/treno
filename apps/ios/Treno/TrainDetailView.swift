@@ -20,6 +20,9 @@ struct TrainDetailView: View {
                     header(detail)
                     arrivalTrio(detail)
                     observationChips(detail)
+                    if let conns = detail.connections, !conns.isEmpty {
+                        connectionsSection(conns)
+                    }
                     stopTimeline(detail)
                     footer(detail)
                 }
@@ -94,19 +97,36 @@ struct TrainDetailView: View {
         .glassCard()
     }
 
-    /// Scheduled vs Trenord vs our estimate — never collapse these into one number.
+    /// Scheduled vs Trenord vs our model — never collapse these into one number.
     private func arrivalTrio(_ d: TrainDetail) -> some View {
         let s = d.state
-        let ours = s?.destinationOperatorEta // v0 passthrough until the benchmark beats the operator
+        let ours = s?.ourEstimate
         return VStack(spacing: 10) {
             SectionLabel("destination · \(s?.destination?.name ?? "arrival")")
             HStack(alignment: .top, spacing: 0) {
-                trioCell(label: "Scheduled", value: Fmt.hhmm(s?.schedArrEpoch), color: .trenoDim)
-                trioCell(label: "Operator", value: Fmt.hhmm(s?.destinationOperatorEta), color: .trenoWarn)
-                trioCell(label: "Ours (v0)", value: Fmt.hhmm(ours), color: .trenoAccent)
+                trioCell(label: "Scheduled", value: Fmt.hhmm(s?.schedArrEpoch), sub: nil, color: .trenoDim)
+                trioCell(label: "Operator", value: Fmt.hhmm(s?.destinationOperatorEta), sub: nil, color: .trenoWarn)
+                trioCell(label: "Ours", value: Fmt.hhmm(ours?.p50),
+                         sub: ours != nil ? "\(Fmt.hhmm(ours?.p10))–\(Fmt.hhmm(ours?.p90))" : nil,
+                         color: .trenoAccent)
+            }
+            if let recovery = ours?.recoverySec, recovery != 0, let current = s?.operatorDelaySec {
+                Label(
+                    recovery > 0
+                        ? "expected to recover ~\(abs(recovery / 60))m of the current \(Fmt.delay(current)) by arrival"
+                        : "expected to lose another ~\(abs(recovery) / 60)m by arrival",
+                    systemImage: recovery > 0 ? "arrow.down.right.circle.fill" : "arrow.up.right.circle.fill"
+                )
+                .font(.caption2)
+                .foregroundStyle(recovery > 0 ? Color.trenoGood : Color.trenoWarn)
             }
             if let spread = s?.sourceDelaySpreadSec, spread > 60 {
                 Label("sources disagree by \(spread / 60)m — lower confidence", systemImage: "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(.trenoWarn)
+            }
+            if let q = s?.quality, !q.isEmpty {
+                Text("quality: " + q.joined(separator: ", "))
                     .font(.caption2)
                     .foregroundStyle(.trenoWarn)
             }
@@ -114,7 +134,7 @@ struct TrainDetailView: View {
         .glassCard()
     }
 
-    private func trioCell(label: String, value: String, color: Color) -> some View {
+    private func trioCell(label: String, value: String, sub: String?, color: Color) -> some View {
         VStack(spacing: 4) {
             Text(label.uppercased())
                 .font(.caption2.weight(.semibold))
@@ -124,8 +144,55 @@ struct TrainDetailView: View {
                 .monospacedDigit()
                 .foregroundStyle(color)
                 .contentTransition(.numericText())
+            Text(sub ?? " ")
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(.trenoDim)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// Connection risk at the destination (§18): P(making each next service).
+    private func connectionsSection(_ conns: [ConnectionOption]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("connections at destination")
+            ForEach(conns) { c in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(c.trainNumber + (c.line.map { "  \($0)" } ?? ""))
+                            .font(.footnote.weight(.semibold))
+                            .monospacedDigit()
+                        Text("→ \(c.destinationName ?? "?") · \(Fmt.hhmm(c.depEpoch))" + (c.operatorDelaySec != nil ? " (live)" : ""))
+                            .font(.caption2)
+                            .foregroundStyle(.trenoDim)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(probLabel(c.probability))
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(probColor(c.probability))
+                        Text("transfer \(c.transferSec / 60)m")
+                            .font(.caption2)
+                            .foregroundStyle(.trenoDim)
+                    }
+                }
+                .padding(.vertical, 4)
+                if c.id != conns.last?.id { Divider().overlay(Color.white.opacity(0.06)) }
+            }
+        }
+        .glassCard()
+    }
+
+    private func probLabel(_ p: Double) -> String {
+        if p >= 0.999 { return "99%+" }
+        return String(Int((p * 100).rounded())) + "%"
+    }
+
+    private func probColor(_ p: Double) -> Color {
+        if p >= 0.8 { return .trenoGood }
+        if p >= 0.5 { return .trenoWarn }
+        return .trenoBad
     }
 
     private func observationChips(_ d: TrainDetail) -> some View {
@@ -223,8 +290,10 @@ struct TrainDetailView: View {
 
     private func footer(_ d: TrainDetail) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("v0 passthrough model — our estimate equals the operator ETA until the benchmark proves we can beat it.")
-            Text("Sources: Trenord MIA + ViaggiaTreno/RFI, fused with per-source provenance. Times in Europe/Rome.")
+            if let model = d.state?.ourEstimate?.modelVersion ?? d.latestPrediction?.modelVersion {
+                Text("model: \(model) — independent segment-history estimate blended with the operator ETA (history coverage \((d.state?.ourEstimate?.statsCoverage ?? 0) * 100, specifier: "%.0f")%).")
+            }
+            Text("Accuracy claims only after the benchmark proves them (§34). Sources: Trenord MIA + ViaggiaTreno/RFI with per-source provenance. Times in Europe/Rome.")
         }
         .font(.caption2)
         .foregroundStyle(.trenoDim)

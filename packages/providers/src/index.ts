@@ -5,3 +5,8 @@ export { VT_SOURCE, VT_PARSER_VERSION, vtAutocomplete, fetchVtTrain, parseVtTrai
 export type { VtTrainRef, VtFetch } from './vt.ts';
 export type { MiaFetch } from './mia.ts';
 export type { ProviderTrainSnapshot, ProviderStopEvent } from './types.ts';
+export type { VehiclePosition, TripUpdate, ServiceAlert, RealtimeTransitProvider } from './realtime.ts';
+export { ProviderNotConfiguredError } from './realtime.ts';
+export { RapsodiaProvider } from './rapsodia.ts';
+export { ATM_SOURCE, fetchAtmStop, atmConfiguredStops } from './atm.ts';
+export type { AtmStopSnapshot, AtmWaitMessage } from './atm.ts';

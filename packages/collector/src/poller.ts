@@ -11,8 +11,10 @@ import { fetchVtTrain, vtAutocomplete, type VtTrainRef } from '#providers/vt.ts'
 import { fetchMiaTrain as fetchMia } from '#providers/mia.ts';
 import { MIA_PARSER_VERSION, MIA_SOURCE } from '#providers/mia.ts';
 import { VT_PARSER_VERSION, VT_SOURCE } from '#providers/vt.ts';
+import { ATM_SOURCE, atmConfiguredStops, fetchAtmStop } from '#providers/atm.ts';
 import { putSnapshot } from '#storage/rawStore.ts';
 import { updateProviderHealth } from '#storage/observations.ts';
+import { refreshSegmentStats, logSegmentSummary } from '#storage/segments.ts';
 import { ingestSnapshot, stateSummaryLine, type FusedState } from './pipeline.ts';
 import { discoverRuns, type DiscoveredRun } from './discover.ts';
 
@@ -67,6 +69,8 @@ export class Collector {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastDiscovery = 0;
   private lastSummary = 0;
+  private lastStatsRefresh = 0;
+  private lastAtmPoll = 0;
   private stopped = false;
   private onTick: ((n: number) => void) | null = null;
 
@@ -113,6 +117,7 @@ export class Collector {
         this.refreshDiscovery();
       }
       await this.pollDue(now);
+      this.maintenance(now);
       this.prune(now);
       if (now - this.lastSummary > 60_000) {
         this.lastSummary = now;
@@ -159,6 +164,45 @@ export class Collector {
           schedDepEpoch: null, schedArrEpoch: null,
           watch: true, vtRef: null, vtRefTriedAt: 0, nextMiaAt: 0, nextVtAt: 0, lastState: null,
         });
+      }
+    }
+  }
+
+  /** Periodic maintenance: segment-stat refresh (10 min) and optional ATM stop polling (60s). */
+  private maintenance(now: number): void {
+    if (now - this.lastStatsRefresh > 10 * 60_000) {
+      this.lastStatsRefresh = now;
+      try {
+        const r = refreshSegmentStats(this.db);
+        logSegmentSummary(this.db);
+        log.info('collector: segment stats refreshed', { segmentsSeen: r.segments });
+      } catch (e) {
+        log.warn('collector: segment stats refresh failed', { error: String(e) });
+      }
+    }
+    const atmStops = atmConfiguredStops();
+    if (atmStops.length > 0 && now - this.lastAtmPoll > 60_000) {
+      this.lastAtmPoll = now;
+      for (const stopId of atmStops) {
+        void (async () => {
+          try {
+            const fetchedAt = Date.now();
+            const snap = await fetchAtmStop(stopId, this.cfg.userAgent);
+            putSnapshot(this.db, this.cfg.dataDir, {
+              source: ATM_SOURCE, entityKey: 'stop|' + stopId, fetchedAt,
+              httpStatus: snap.result.status, etag: snap.result.etag, lastModified: snap.result.lastModified,
+              payloadJson: snap.raw, relevantHash: null, parserVersion: 'atm-v1',
+              error: snap.result.ok ? null : snap.result.error,
+            });
+            updateProviderHealth(this.db, ATM_SOURCE, { ok: snap.result.ok, latencyMs: snap.result.latencyMs, error: snap.result.error });
+            if (snap.result.ok) {
+              this.db.prepare('INSERT INTO atm_stop_observations(stop_id, fetched_at, wait_messages, raw_hash) VALUES(?,?,?,?)')
+                .run(stopId, fetchedAt, JSON.stringify(snap.waitMessages), String(snap.raw.length));
+            }
+          } catch (e) {
+            log.warn('collector: atm poll error', { stopId, error: String(e) });
+          }
+        })();
       }
     }
   }

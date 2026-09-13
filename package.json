@@ -18,6 +18,8 @@
     "gtfs:load": "tsx packages/gtfs/src/cli.ts",
     "collector": "tsx packages/collector/src/index.ts",
     "api": "tsx packages/api/src/server.ts",
+    "bench": "tsx packages/collector/src/bench.ts",
+    "retain": "tsx packages/storage/src/retention.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

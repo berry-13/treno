@@ -99,6 +99,43 @@ Monorepo layout (npm workspaces, TypeScript ESM, no build step — run with tsx)
 | `apps/web` | single-file debug page (scheduled vs operator vs ours) |
 | `apps/ios` | **native iOS client** — SwiftUI + Liquid Glass (iOS 26) |
 
+## Prediction & intelligence layer (current state)
+
+- **Segment model (§13)** — `segment_observation` rows derive automatically
+  from actual stop events; `segment_stats` holds runtime/delay-delta
+  distributions (p10/p50/p90, peak/off-peak buckets), refreshed every 10 min.
+  `npx tsx packages/collector/src/backfill-segments.ts` retro-derives from
+  collected history.
+- **Heuristic ETA v1 (§66)** — model `heuristic-v1`: independent estimate
+  (anchor at last actual + segment medians + live corridor adjustment) blended
+  with the operator ETA (weight by freshness and history coverage). Outputs
+  p10/p50/p90 + confidence + expected recovery; features are persisted per
+  prediction (`features_json`) for reproducibility (§35).
+- **Connection risk (§18)** — `GET /api/trains/:id` returns the next
+  departures at the destination with P(success) from our arrival distribution
+  + per-station transfer buffer, using live delay of the connecting service
+  when tracked. Shown in the iOS app as "connections at destination".
+- **Benchmark (§34)** — `npm run bench [-- --days=30]`: scores every recorded
+  prediction at T-1…T-30+ horizons: schedule vs operator vs each of our models
+  (MAE/medAE/RMSE/P90/P95/bias + interval coverage), writes
+  `data/reports/benchmark-YYYY-MM-DD.md`. Verdict line refuses to claim
+  accuracy until a model beats the operator on ≥30 outcomes.
+- **Quality engine (§45)** — DELAY_JUMP flags on observations;
+  SOURCE_CONFLICT/STALE_SOURCE in fused state quality.
+- **Alerts (§50)** — provider alerts deduped into `service_alerts`;
+  `GET /api/alerts`.
+- **Retention (§43)** — `npm run retain [-- --raw-days=45 --obs-days=365]`.
+- **Provider abstraction (§24/§74)** — `RealtimeTransitProvider` interface;
+  `RapsodiaProvider` stub activates by setting `TRENO_RAPSODIA_URL`.
+- **ATM/GiroMilano (§20)** — stop WaitMessage ingestion available; opt in with
+  `TRENO_ATM_STOPS=11491,...` (disabled by default; no vehicle identity
+  exists in that feed — reconstruction deliberately deferred until RAPSODIA,
+  §21-22).
+
+Early findings from day-one data (see data/reports/): the operator ETA shows a
+**systematic −30…−67 s optimistic bias** at T-1…T-30 horizons — exactly the
+residual the ML phase (§67) will target once enough history accumulates.
+
 ## Data layout (all under `data/`, gitignored)
 
 ```
@@ -127,12 +164,16 @@ Normalized tables worth knowing:
 ## API
 
 ```
-GET /api/health                     providers + table counts
-GET /api/trains?q=&limit=           runs with fused state
-GET /api/trains/:id                 run + stops + recent observations (id or 2174@2026-09-13)
+GET /api/health                     providers + table counts + change rates
+GET /api/trains?q=&limit=           runs with fused state (incl. ourEstimate)
+GET /api/trains/:id                 run + stops + observations + latestPrediction + connections
 GET /api/stops/search?q=
 GET /api/stops/:id/departures       today's board ±window with live state
-GET /                                web UI
+GET /api/segments                   segment statistics (top by sample count)
+GET /api/corridor?from=&to=         segment stats + live congestion delta
+GET /api/alerts                     recent provider alerts
+GET /api/atm/stops/:id              ATM stop observations (when enabled)
+GET /                                web debug page
 ```
 
 ## Source etiquette (§57)

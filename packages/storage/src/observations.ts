@@ -3,6 +3,7 @@
  * COALESCE semantics: once an actual arrival/departure is recorded it is never
  * overwritten by a null, while operator predictions always refresh.
  */
+import { createHash } from 'node:crypto';
 import { runStmt, getRow, getRows, type Db } from '#core/db.ts';
 
 export interface ObservationArgs {
@@ -16,12 +17,14 @@ export interface ObservationArgs {
   locationKind: string | null; // station | reporting_point | unknown
   status: string | null;
   rawHash: string | null;
+  qualityFlags?: string[] | null; // §45: OUT_OF_ORDER, DELAY_JUMP, ...
 }
 
 export function insertObservation(db: Db, a: ObservationArgs): void {
   runStmt(
-    db.prepare('INSERT INTO train_observations(run_id, ts, source, observed_at, delay_seconds, location_id, location_name, location_kind, status, raw_hash) VALUES(?,?,?,?,?,?,?,?,?,?)'),
-    [a.runId, a.ts, a.source, a.observedAt, a.delaySeconds, a.locationId, a.locationName, a.locationKind, a.status, a.rawHash],
+    db.prepare('INSERT INTO train_observations(run_id, ts, source, observed_at, delay_seconds, location_id, location_name, location_kind, status, raw_hash, quality_flags) VALUES(?,?,?,?,?,?,?,?,?,?,?)'),
+    [a.runId, a.ts, a.source, a.observedAt, a.delaySeconds, a.locationId, a.locationName, a.locationKind, a.status, a.rawHash,
+     a.qualityFlags && a.qualityFlags.length > 0 ? JSON.stringify(a.qualityFlags) : null],
   );
 }
 
@@ -131,10 +134,25 @@ export function recordPrediction(db: Db, p: {
   modelVersion: string; runId: number; stopId: string; generatedAt: number;
   schedArrEpoch: number | null; operatorEtaEpoch: number | null;
   ourP10: number | null; ourP50: number | null; ourP90: number | null; confidence: number | null;
+  featuresJson?: string | null;
 }): number {
-  const r = db.prepare('INSERT INTO predictions(model_version, run_id, stop_id, generated_at, sched_arr_epoch, operator_eta_epoch, our_p10, our_p50, our_p90, confidence) VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(p.modelVersion, p.runId, p.stopId, p.generatedAt, p.schedArrEpoch, p.operatorEtaEpoch, p.ourP10, p.ourP50, p.ourP90, p.confidence);
+  const r = db.prepare('INSERT INTO predictions(model_version, run_id, stop_id, generated_at, sched_arr_epoch, operator_eta_epoch, our_p10, our_p50, our_p90, confidence, features_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    .run(p.modelVersion, p.runId, p.stopId, p.generatedAt, p.schedArrEpoch, p.operatorEtaEpoch, p.ourP10, p.ourP50, p.ourP90, p.confidence, p.featuresJson ?? null);
   return Number(r.lastInsertRowid);
+}
+
+/** Persist a provider alert with content-hash dedup (§50). */
+export function insertServiceAlert(db: Db, a: {
+  source: string; runId: number | null; stopId: string | null;
+  title: string | null; description: string | null; severity: string | null;
+  startEpoch?: number | null; endEpoch?: number | null; raw: unknown;
+}): void {
+  const raw = JSON.stringify(a.raw);
+  const hash = createHash('sha256').update(a.source + '|' + String(a.runId) + '|' + raw).digest('hex');
+  runStmt(
+    db.prepare('INSERT OR IGNORE INTO service_alerts(source, run_id, stop_id, title, description, severity, start_epoch, end_epoch, payload_hash, raw_json, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)'),
+    [a.source, a.runId, a.stopId, a.title, a.description, a.severity, a.startEpoch ?? null, a.endEpoch ?? null, hash, raw, Date.now()],
+  );
 }
 
 /** When an actual arrival lands, score every recorded prediction for that run+stop. */

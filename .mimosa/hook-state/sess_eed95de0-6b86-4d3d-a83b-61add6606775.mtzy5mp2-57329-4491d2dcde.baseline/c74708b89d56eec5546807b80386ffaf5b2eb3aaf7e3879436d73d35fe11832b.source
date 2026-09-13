@@ -87,7 +87,7 @@ export function buildApp(db: Db) {
     const base = runWithState(db, 'r.id=?', [run.id], 1)[0];
     if (!base) return c.json({ error: 'not found' }, 404);
     const stops = getRows(db,
-      'SELECT stop_id, stop_sequence, sched_arr_epoch, sched_dep_epoch, op_pred_arr_epoch, op_pred_dep_epoch, actual_arr_epoch, actual_dep_epoch, arr_delay_sec, dep_delay_sec, platform_actual, cancelled FROM train_stop_events WHERE run_id=? ORDER BY stop_sequence ASC',
+      'SELECT e.stop_id, g.stop_name, e.stop_sequence, e.sched_arr_epoch, e.sched_dep_epoch, e.op_pred_arr_epoch, e.op_pred_dep_epoch, e.actual_arr_epoch, e.actual_dep_epoch, e.arr_delay_sec, e.dep_delay_sec, e.platform_actual, e.cancelled FROM train_stop_events e LEFT JOIN gtfs_stops g ON g.stop_id = e.stop_id WHERE e.run_id=? ORDER BY e.stop_sequence ASC',
       [run.id]);
     const observations = getRows(db,
       'SELECT ts, source, observed_at, delay_seconds, location_id, location_name, location_kind, status FROM train_observations WHERE run_id=? ORDER BY ts DESC LIMIT 50',

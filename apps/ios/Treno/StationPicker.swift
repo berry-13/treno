@@ -216,10 +216,9 @@ struct MapStationsView: View {
                                 .font(.system(size: 14, weight: .bold))
                                 .padding(.horizontal, 18)
                                 .padding(.vertical, 9)
-                                .background(Color.tPrimary, in: Capsule())
-                                .foregroundStyle(.black)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.glass)
+                        .tint(.tPrimary)
                     }
                 }
                 .padding(16)
@@ -250,6 +249,18 @@ struct MapStationsView: View {
         .tint(.tPrimary)
         .task {
             stations = (try? await StationCatalog.shared.stations()) ?? []
+            // debug: `--map-select <stopId>` selects a pin so the card is capturable
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "--map-select"), i + 1 < args.count {
+                let id = args[i + 1]
+                if let st = stations.first(where: { $0.stopId == id }), let lat = st.lat, let lon = st.lon {
+                    selection = st
+                    camera = .region(MKCoordinateRegion(
+                        center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                        span: MKCoordinateSpan(latitudeDelta: 0.25, longitudeDelta: 0.25)
+                    ))
+                }
+            }
         }
     }
 

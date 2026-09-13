@@ -193,15 +193,18 @@ struct ObservationRow: Codable, Hashable {
     }
 }
 
-struct ProviderHealth: Codable, Hashable {
+struct ProviderHealth: Codable, Hashable, Identifiable {
     let source: String
     let okCount: Int
     let errCount: Int
     let lastLatencyMs: Int?
     let healthState: String
+    let changedLastHour: Int?
+
+    var id: String { source }
 
     enum CodingKeys: String, CodingKey {
-        case source
+        case source, changedLastHour
         case okCount = "ok_count"
         case errCount = "err_count"
         case lastLatencyMs = "last_latency_ms"
@@ -209,8 +212,21 @@ struct ProviderHealth: Codable, Hashable {
     }
 }
 
+struct HealthCounts: Codable, Hashable {
+    var runs: Int?
+    var observations: Int?
+    var stopEvents: Int?
+    var snapshots: Int?
+    var predictions: Int?
+    var scoredOutcomes: Int?
+    var segmentObservations: Int?
+    var segmentsWithStats: Int?
+    var alerts: Int?
+}
+
 struct HealthResponse: Codable {
     let ok: Bool
+    let counts: HealthCounts?
     let providers: [ProviderHealth]?
 }
 

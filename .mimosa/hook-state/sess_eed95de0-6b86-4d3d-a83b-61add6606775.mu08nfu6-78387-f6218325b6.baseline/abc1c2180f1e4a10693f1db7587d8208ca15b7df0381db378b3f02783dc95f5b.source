@@ -1,5 +1,0 @@
-{
-  "name": "@treno/gtfs",
-  "private": true,
-  "type": "module"
-}

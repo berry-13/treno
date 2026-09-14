@@ -232,3 +232,31 @@ TRENO_MAX_TRACKED    default 80 concurrent runs
 TRENO_MIN_POLL_SEC   default 20 (per-entity floor)
 TRENO_GTFS_URL       default dati.lombardia.it 3z4k-mxz9 download
 ```
+
+## Server deployment (Docker + ClickHouse)
+
+One image, three roles, plus ClickHouse (PLAN_docker_clickhouse.md):
+
+```
+docker compose up -d --build        # collector + api :8787 + trainer + clickhouse
+```
+
+- Image builds from the repo root Dockerfile (node:24-slim, tsx runs TS
+  directly). CI (`.github/workflows/docker.yml`) pushes multi-arch images to
+  `ghcr.io/berry-13/treno` on every main push and runs a compose smoke test.
+- ClickHouse tables are created on first container start from
+  `deploy/clickhouse-init/01_tables.sql`; its ports are loopback-only.
+- The collector/api mirror inserts into ClickHouse when
+  `TRENO_CLICKHOUSE_URL` is set (compose sets it automatically). SQLite on
+  the `treno-data` volume stays the operational truth.
+- One-shot history import on a fresh server:
+  `TRENO_CLICKHOUSE_URL=http://clickhouse:8123 npm run ch:backfill`
+  (10k-row batches; ~700k rows in ~20s).
+- Remote server: `docker login ghcr.io`, then
+  `TRENO_IMAGE=ghcr.io/berry-13/treno:latest docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d`
+  and point iOS Settings at `http://<server-ip>:8787`.
+
+Additional env for the mirror:
+```
+TRENO_CLICKHOUSE_URL   unset = SQLite-only (local dev default)
+```

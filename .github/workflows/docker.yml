@@ -95,12 +95,17 @@ jobs:
 
       - name: ClickHouse mirror receiving rows
         run: |
+          CF="docker compose -f docker-compose.yml -f docker-compose.ci.yml"
+          last=""
           for i in $(seq 1 30); do
-            n=$(docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T clickhouse clickhouse-client --query 'SELECT count() FROM train_runs' 2>/dev/null || echo 0)
-            if [ "$n" -gt 0 ]; then echo "train_runs mirrored: $n"; exit 0; fi
+            last=$($CF exec -T clickhouse clickhouse-client --query 'SELECT count() FROM train_runs' 2>&1) || true
+            case "$last" in *[!0-9]*|'') ;; *) [ "$last" -gt 0 ] && { echo "train_runs mirrored: $last"; exit 0; } ;; esac
             sleep 10
           done
-          echo "ClickHouse mirror stayed empty"; docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail 50 collector; exit 1
+          echo "ClickHouse mirror stayed empty (last query output: $last)"
+          $CF logs --tail 300 collector | grep -Ei 'ch flush|error|warn' | tail -30 || true
+          $CF logs --tail 30 clickhouse || true
+          exit 1
 
       - name: Tear down
         if: always()

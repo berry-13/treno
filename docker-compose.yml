@@ -7,6 +7,19 @@
 #   docker compose up -d --build
 #
 services:
+  # one-shot schema init: the official ClickHouse image has no
+  # /docker-entrypoint-initdb.d support, so DDL is applied by a short-lived
+  # client container (idempotent — CREATE TABLE IF NOT EXISTS)
+  ch-init:
+    image: clickhouse/clickhouse-server:24-alpine
+    restart: "no"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      - ./deploy/clickhouse-init:/init:ro
+    entrypoint: ["clickhouse-client", "-h", "clickhouse", "--queries-file", "/init/01_tables.sql"]
+
   collector:
     build: .
     image: treno:local
@@ -19,8 +32,8 @@ services:
     healthcheck:
       disable: true
     depends_on:
-      clickhouse:
-        condition: service_healthy
+      ch-init:
+        condition: service_completed_successfully
 
   api:
     image: treno:local

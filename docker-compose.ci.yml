@@ -2,6 +2,9 @@
 # image instead of building locally, and keep the trainer idle — the smoke
 # checks health + live board data, not training.
 services:
+  ch-init:
+    build: !reset null
+    image: clickhouse/clickhouse-server:24-alpine
   collector:
     build: !reset null
     image: ${TRENO_IMAGE:-ghcr.io/berry-13/treno:latest}

@@ -1,14 +1,14 @@
 {
   "schemaVersion": "mimosa-hook-status/v1",
-  "recordedAt": "2026-09-14T17:26:55.404Z",
+  "recordedAt": "2026-09-14T18:44:26.272Z",
   "sessionId": "sess_eed95de0-6b86-4d3d-a83b-61add6606775",
   "event": "PostToolUse",
-  "toolName": "Write",
-  "file": "packages/collector/src/weather-arpa.ts",
+  "toolName": "Edit",
+  "file": "bin/com.treno.train.plist",
   "outcome": "clear",
   "coverage": "complete",
   "findingCount": 0,
-  "durationMs": 7,
+  "durationMs": 2,
   "hostState": "hook_complete",
   "reportHint": ".mimosa/reports/"
 }

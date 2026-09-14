@@ -11,7 +11,7 @@
  */
 import { log } from '#core/log.ts';
 
-const STATIONS = ['4f9d-2dcz']; // sensori meteo registry (verified live)
+const STATIONS = ['my9y-8ykb']; // Stazioni Meteorologiche provincia Milano (has tipologia+location, verified)
 const READINGS = ['i95f-5avh']; // Dati sensori meteo (verified live)
 const NEAR: Array<{ lat: number; lon: number }> = [
   { lat: 45.46, lon: 9.19 }, { lat: 45.58, lon: 9.27 }, { lat: 45.54, lon: 10.21 }, { lat: 45.82, lon: 8.82 },
@@ -49,7 +49,8 @@ export async function refreshGauges(): Promise<void> {
     for (const ds of READINGS) {
       const rows = (await get(`https://www.dati.lombardia.it/resource/${ds}.json?idsensore=${id}&$order=data%20DESC&$limit=2`)) as Array<{ valore?: string }> | null;
       const v = rows?.[0]?.valore;
-      if (v != null && Number.isFinite(Number(v))) { vals.push(Number(v)); break; }
+      const num = v != null ? Number(v) : NaN;
+      if (Number.isFinite(num) && num >= 0) { vals.push(num); break; } // ARPA uses -999 as no-data sentinel
     }
   }
   cached = { at: Date.now(), mm: vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 : null };

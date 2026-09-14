@@ -13,27 +13,26 @@ const STEPS = [
   ['npm', ['run', 'backtest']],
 ];
 
-/** Milliseconds until the next 03:30 Europe/Rome, DST-safe via Intl probing. */
+/** Milliseconds until the next 03:30 Europe/Rome, DST-safe by construction:
+ * scan forward in 30-min steps until the Rome wall clock truly reads HH:MM
+ * (wall-time arithmetic alone drifts across both DST boundaries). ≤48 probes. */
 function msUntilNextRomeRun(hour, minute) {
   const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Rome', hourCycle: 'h23', year: 'numeric',
-    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    timeZone: 'Europe/Rome', hourCycle: 'h23',
+    hour: '2-digit', minute: '2-digit',
   });
-  const partsOf = (t) => {
+  const readsTarget = (t) => {
     const parts = {};
     for (const p of fmt.formatToParts(new Date(t))) parts[p.type] = p.value;
-    return parts;
+    return Number(parts.hour) === hour && Number(parts.minute) === minute;
   };
   const now = Date.now();
-  const p = partsOf(now);
-  let cand = now + ((hour - Number(p.hour)) * 60 + (minute - Number(p.minute))) * 60_000;
-  // refine twice so wall-clock offsets (incl. DST jumps) converge; if the
-  // candidate slipped into the past, roll a day forward
-  for (let i = 0; i < 2; i++) {
-    const q = partsOf(cand);
-    cand += ((hour - Number(q.hour)) * 60 + (minute - Number(q.minute))) * 60_000;
-  }
-  while (cand <= now) cand += 24 * 3600_000;
+  const halfHour = 30 * 60_000;
+  // snap to the next half-hour boundary (Rome offsets are whole hours, so a
+  // UTC half-hour boundary is also a Rome :00/:30) — otherwise the scan's
+  // minute-of-hour would never hit the target minute
+  let cand = now - (now % halfHour) + halfHour;
+  while (!readsTarget(cand)) cand += halfHour;
   return cand - now;
 }
 

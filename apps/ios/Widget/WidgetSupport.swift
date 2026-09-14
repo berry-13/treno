@@ -30,7 +30,7 @@ enum WColor {
     static let fg = Color(red: 0.98, green: 0.98, blue: 0.98)
     static let muted = Color(red: 0.63, green: 0.63, blue: 0.67)
     static let dim = Color(red: 0.45, green: 0.45, blue: 0.49)
-    static let primary = Color(red: 0.0, green: 0.71, blue: 0.40)
+    static let primary = Color.blue
     static let late = Color(red: 0.95, green: 0.65, blue: 0.15)
     static let veryLate = Color(red: 0.91, green: 0.30, blue: 0.30)
 
@@ -47,6 +47,8 @@ struct WJourney: Codable {
     let line: String?
     let depEpoch: Double
     let arrEpoch: Double
+    let destinationName: String?
+    let actualDepEpoch: Double?
     let depDelaySec: Int?
     let platform: String?
     let state: WState?
@@ -54,6 +56,8 @@ struct WJourney: Codable {
         let status: String?
         let operatorDelaySec: Int?
         let ourEstimate: WOurs?
+        let destination: WPlace?
+        struct WPlace: Codable { let name: String? }
         struct WOurs: Codable { let p10: Double; let p50: Double; let p90: Double }
     }
 }
@@ -87,7 +91,11 @@ enum WFetch {
         guard let (data, _) = try? await URLSession.shared.data(from: url),
               let r = try? JSONDecoder().decode(WJourneysResponse.self, from: data) else { return nil }
         let nowMs = Date.now.timeIntervalSince1970 * 1000
-        return r.journeys.first { ($0.depEpoch + 10 * 60_000 > nowMs) || ($0.state?.status == "running") }
-            ?? r.journeys.first
+        return r.journeys.first {
+            $0.state?.status != "cancelled" && $0.state?.status != "arrived"
+                && $0.actualDepEpoch == nil
+                && $0.depEpoch + Double($0.depDelaySec ?? $0.state?.operatorDelaySec ?? 0) * 1000 >= nowMs - 30_000
+        }
+
     }
 }

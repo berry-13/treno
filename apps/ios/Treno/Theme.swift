@@ -1,109 +1,209 @@
 import SwiftUI
 
-// Design system: shadcn/ui-inspired zinc-dark palette with Trenord green as
-// the single accent. Neutral surfaces carry the layout; color is reserved for
-// meaning (primary/green = ours & healthy, amber = late, red = risk).
-
+// Semantic system colors keep every surface legible in light and dark mode.
+// Blue identifies actions; green, orange, and red describe service conditions.
 extension ShapeStyle where Self == Color {
-    // surfaces
-    static var tBg: Color { Color(red: 0.035, green: 0.035, blue: 0.043) }        // zinc-950
-    static var tCard: Color { Color(red: 0.055, green: 0.055, blue: 0.063) }      // zinc-900
-    static var tElevated: Color { Color(red: 0.086, green: 0.086, blue: 0.098) }  // zinc-800
-    // lines & text
-    static var tBorder: Color { Color.white.opacity(0.07) }
-    static var tFg: Color { Color(red: 0.98, green: 0.98, blue: 0.98) }           // zinc-50
-    static var tMuted: Color { Color(red: 0.63, green: 0.63, blue: 0.67) }        // zinc-400
-    static var tDim: Color { Color(red: 0.45, green: 0.45, blue: 0.49) }          // zinc-500
-    // accent (Trenord green, tuned for dark surfaces)
-    static var tPrimary: Color { Color(red: 0.0, green: 0.71, blue: 0.40) }       // #00B566
-    static var tPrimaryDim: Color { Color(red: 0.0, green: 0.71, blue: 0.40).opacity(0.14) }
-    // semantics
-    static var tLate: Color { Color(red: 0.95, green: 0.65, blue: 0.15) }         // amber
-    static var tVeryLate: Color { Color(red: 0.91, green: 0.30, blue: 0.30) }     // red
-    static var tEarly: Color { Color(red: 0.0, green: 0.71, blue: 0.40) }
-    static var tWarn: Color { Color(red: 0.95, green: 0.65, blue: 0.15) }
-    static var tDanger: Color { Color(red: 0.91, green: 0.30, blue: 0.30) }
+    static var tBg: Color { Color(uiColor: .systemGroupedBackground) }
+    static var tCard: Color { Color(uiColor: .secondarySystemGroupedBackground) }
+    static var tElevated: Color { Color(uiColor: .tertiarySystemGroupedBackground) }
+    static var tBorder: Color { Color(uiColor: .separator).opacity(0.35) }
+    static var tFg: Color { Color(uiColor: .label) }
+    static var tMuted: Color { Color(uiColor: .secondaryLabel) }
+    static var tDim: Color { Color(uiColor: .secondaryLabel) }
+    static var tPrimary: Color { .blue }
+    static var tPrimaryDim: Color { Color.blue.opacity(0.08) }
+    static var tGood: Color { Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? .systemGreen : UIColor(red: 0.12, green: 0.46, blue: 0.27, alpha: 1) }) }
+    static var tLate: Color { Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? .systemOrange : UIColor(red: 0.64, green: 0.34, blue: 0.02, alpha: 1) }) }
+    static var tVeryLate: Color { .red }
+    static var tEarly: Color { .tGood }
+    static var tWarn: Color { .tLate }
+    static var tDanger: Color { .red }
 }
 
-// MARK: - shared pieces
+// Quiet color behind the controls gives the native material something to
+// refract. Accessibility settings restore a plain, opaque system surface.
+struct TrenoBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
-/// shadcn "muted label": micro uppercase, tracked, zinc-500.
+    var body: some View {
+        ZStack {
+            Color.tBg
+            if !reduceTransparency && contrast != .increased {
+                GeometryReader { geometry in
+                    RadialGradient(colors: [.blue.opacity(colorScheme == .dark ? 0.16 : 0.10), .clear],
+                                   center: .topLeading, startRadius: 0, endRadius: geometry.size.height * 0.75)
+                    RadialGradient(colors: [.cyan.opacity(colorScheme == .dark ? 0.07 : 0.06), .clear],
+                                   center: .bottomTrailing, startRadius: 0, endRadius: geometry.size.height * 0.6)
+                }
+            }
+        }.ignoresSafeArea().allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+
+private struct TrenoGlass: ViewModifier {
+    let cornerRadius: CGFloat
+    let interactive: Bool
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    func body(content: Content) -> some View {
+        if reduceTransparency || contrast == .increased {
+            content.background(Color.tCard, in: RoundedRectangle(cornerRadius: cornerRadius))
+                .overlay(RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Color.tBorder))
+        } else {
+            content.glassEffect(.regular.interactive(interactive), in: .rect(cornerRadius: cornerRadius))
+        }
+    }
+}
+
+extension View {
+    func trenoGlass(cornerRadius: CGFloat = 26, interactive: Bool = true) -> some View {
+        modifier(TrenoGlass(cornerRadius: cornerRadius, interactive: interactive))
+    }
+}
+
 struct MicroLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
-        Text(text.uppercased())
-            .font(.system(size: 10.5, weight: .semibold))
-            .tracking(1.4)
-            .foregroundStyle(.tDim)
+        Text(text).font(.subheadline.weight(.semibold)).foregroundStyle(.tMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// shadcn badge: 10.5px medium, tinted fill, hairline border.
 struct TBadge: View {
     let text: String
     let color: Color
-    init(_ text: String, _ color: Color) {
-        self.text = text
-        self.color = color
-    }
+    init(_ text: String, _ color: Color) { self.text = text; self.color = color }
     var body: some View {
-        Text(text)
-            .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(color.opacity(0.22), lineWidth: 0.8))
+        Text(text).font(.caption.weight(.semibold))
+            .foregroundStyle(color).padding(.horizontal, 8).padding(.vertical, 4)
+            .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+struct SectionHeading: View {
+    let title: String
+    var body: some View {
+        Text(title).font(.title3.weight(.bold)).foregroundStyle(.tFg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+struct TravelNotice: View {
+    let title: String
+    let message: String
+    var icon = "wifi.exclamationmark"
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(message).font(.footnote).foregroundStyle(.tMuted)
+            }
+        } icon: {
+            Image(systemName: icon).foregroundStyle(.tMuted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18).background(Color.tCard, in: RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+struct RouteEndpoints: View {
+    let from: String
+    let to: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label { Text(from).foregroundStyle(.tMuted) } icon: {
+                Image(systemName: "circle").font(.caption.weight(.semibold))
+            }
+            Label { Text(to).font(.title2.weight(.semibold)).foregroundStyle(.tFg) } icon: {
+                Image(systemName: "mappin.circle.fill")
+            }
+        }
+        .font(.body).foregroundStyle(.tPrimary)
+        .labelStyle(.titleAndIcon)
     }
 }
 
 enum StatusUI {
     static func color(_ status: String?) -> Color {
         switch status {
-        case "running": return .tPrimary
-        case "scheduled": return .tMuted
-        case "arrived": return .tDim
+        case "running": return .tGood
         case "cancelled": return .tDanger
-        default: return .tDim
+        default: return .tMuted
         }
     }
-
     static func label(_ status: String?) -> String {
         switch status {
-        case "running": return "Running"
+        case "running": return "On its way"
         case "scheduled": return "Scheduled"
         case "arrived": return "Arrived"
         case "cancelled": return "Cancelled"
-        default: return (status ?? "Unknown").capitalized
+        default: return "Timetable"
         }
     }
-
     static func delayColor(_ sec: Int?) -> Color {
-        guard let s = sec else { return .tMuted }
-        if s >= 300 { return .tVeryLate }
-        if s >= 60 { return .tLate }
-        if s < 0 { return .tEarly }
-        return .tMuted
+        guard let sec else { return .tMuted }
+        if sec >= 300 { return .tVeryLate }
+        if sec >= 60 { return .tLate }
+        return .tGood
     }
-
-    static func confidenceColor(_ c: String?) -> Color {
-        switch c {
-        case "HIGH": return .tPrimary
+    static func confidenceColor(_ confidence: String?) -> Color {
+        switch confidence {
+        case "HIGH": return .tGood
         case "MEDIUM": return .tLate
-        case "LOW": return .tVeryLate
-        default: return .tDim
+        default: return .tMuted
         }
     }
 }
 
 extension Fmt {
-    /// compact delay for row trailing: "+3", "−2", "on time", "—"
     static func delayShort(_ sec: Int?) -> String {
-        guard let s = sec else { return "—" }
-        if s == 0 { return "on time" }
-        let m = Int((Double(s) / 60).rounded())
-        return m > 0 ? "+\(m)" : "−\(-m)"
+        guard let sec else { return "Timetable" }
+        if abs(sec) < 60 { return "On time" }
+        let mins = Int((Double(abs(sec)) / 60).rounded())
+        return sec > 0 ? "\(mins) min late" : "\(mins) min early"
+    }
+    static func platform(_ value: String?) -> String? {
+        guard let value, let number = Int(value), (1...30).contains(number) else { return nil }
+        return value
+    }
+    static func departure(_ epoch: Double, now: Date = .now) -> String {
+        let minutes = Int(ceil((epoch - now.timeIntervalSince1970 * 1000) / 60_000))
+        if minutes < 0 { return "Departed" }
+        if minutes == 0 { return "Due now" }
+        if minutes < 60 { return "In \(minutes) min" }
+        return "In \(minutes / 60) hr\(minutes % 60 == 0 ? "" : " \(minutes % 60) min")"
+    }
+}
+
+extension JourneyRow {
+    var departureDelay: Int? { depDelaySec ?? state?.operatorDelaySec }
+    var expectedDeparture: Double { actualDepEpoch ?? depEpoch + Double(departureDelay ?? 0) * 1000 }
+    // A run's prediction is for its final destination. Intermediate journeys
+    // use their own scheduled arrival with the observed delay instead.
+    var expectedArrival: Double {
+        if destinationName == state?.destination?.name {
+            return state?.ourEstimate?.p50 ?? state?.destinationOperatorEta ?? arrEpoch + Double(departureDelay ?? 0) * 1000
+        }
+        return arrEpoch + Double(departureDelay ?? 0) * 1000
+    }
+    func canBoard(at now: Date = .now) -> Bool {
+        state?.status != "cancelled" && state?.status != "arrived"
+            && actualDepEpoch == nil && expectedDeparture >= now.timeIntervalSince1970 * 1000 - 30_000
+    }
+}
+
+extension Trip {
+    var daySummary: String {
+        if days.count == 7 { return "Every day" }
+        if days == Set(1...5) { return "Weekdays" }
+        if days == Set([6, 7]) { return "Weekends" }
+        if days.isEmpty { return "No days selected" }
+        let names = [1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"]
+        return days.sorted().compactMap { names[$0] }.joined(separator: ", ")
     }
 }

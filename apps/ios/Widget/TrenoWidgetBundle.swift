@@ -52,8 +52,8 @@ struct TrenoTripWidget: Widget {
             TripWidgetView(entry: entry)
                 .containerBackground(WColor.bg, for: .widget)
         }
-        .configurationDisplayName("Trip")
-        .description("Next train for your first saved trip, with our live estimate.")
+        .configurationDisplayName("Next journey")
+        .description("Departure and arrival times for your first saved journey.")
         .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
@@ -66,10 +66,10 @@ struct TripWidgetView: View {
             content(cfg, j)
         } else {
             VStack(alignment: .leading, spacing: 6) {
-                Image(systemName: "heart")
+                Image(systemName: "bookmark")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(WColor.primary)
-                Text("Open Treno and save a trip")
+                Text(entry.config == nil ? "Save a journey in Treno" : "No train updates available")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(WColor.muted)
                 Spacer()
@@ -83,7 +83,8 @@ struct TripWidgetView: View {
         let delay = j.depDelaySec ?? j.state?.operatorDelaySec
         let running = j.state?.status == "running"
         let estDep = j.depEpoch + Double(delay ?? 0) * 1000
-        let oursArr = j.state?.ourEstimate?.p50
+        let oursArr = j.destinationName == j.state?.destination?.name ? j.state?.ourEstimate?.p50 : nil
+        let arrival = oursArr ?? j.arrEpoch + Double(delay ?? 0) * 1000
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(cfg.fromName)
@@ -105,7 +106,7 @@ struct TripWidgetView: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(WFmt.hhmm(estDep))
-                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .font(.system(size: 26, weight: .semibold, design: .default))
                         .monospacedDigit()
                         .foregroundStyle(WColor.delayColor(delay))
                     if delay != nil && abs(delay!) >= 60 {
@@ -118,8 +119,8 @@ struct TripWidgetView: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text(WFmt.hhmm(oursArr ?? j.arrEpoch))
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                    Text(WFmt.hhmm(arrival))
+                        .font(.system(size: 20, weight: .semibold, design: .default))
                         .monospacedDigit()
                         .foregroundStyle(oursArr != nil ? WColor.primary : WColor.fg)
                 }
@@ -139,7 +140,7 @@ struct TripWidgetView: View {
                     .monospacedDigit()
                     .foregroundStyle(WColor.dim)
                 if let p = j.platform, let n = Int(p), n >= 1, n <= 30 {
-                    Text("bin \(p)")
+                    Text("Platform \(p)")
                         .font(.system(size: 10.5, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(WColor.muted)
@@ -185,10 +186,10 @@ struct TripLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.trailing) {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(WFmt.hhmm(context.state.ourArrEpoch ?? context.state.arrEpoch))
-                            .font(.system(size: 17, weight: .heavy, design: .rounded))
+                            .font(.system(size: 17, weight: .semibold, design: .default))
                             .monospacedDigit()
                             .foregroundStyle(context.state.ourArrEpoch != nil ? WColor.primary : WColor.fg)
-                        Text(context.state.ourArrEpoch != nil ? "ours" : "arrives")
+                        Text("Arrival")
                             .font(.system(size: 9))
                             .foregroundStyle(WColor.dim)
                     }
@@ -208,7 +209,7 @@ struct TripLiveActivity: Widget {
                             .monospacedDigit()
                             .foregroundStyle(WColor.fg)
                         if let p = context.state.platform {
-                            Text("bin \(p)")
+                            Text("Platform \(p)")
                                 .font(.system(size: 11))
                                 .monospacedDigit()
                                 .foregroundStyle(WColor.muted)
@@ -301,14 +302,14 @@ struct LockScreenActivityView: View {
                 }
                 HStack(spacing: 8) {
                     Text(WFmt.hhmm(s.depEpoch + Double(delay ?? 0) * 1000))
-                        .font(.system(size: 24, weight: .heavy, design: .rounded))
+                        .font(.system(size: 24, weight: .semibold, design: .default))
                         .monospacedDigit()
                         .foregroundStyle(WColor.delayColor(delay))
                     Image(systemName: "arrow.right")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(WColor.primary)
                     Text(WFmt.hhmm(s.ourArrEpoch ?? s.arrEpoch))
-                        .font(.system(size: 24, weight: .heavy, design: .rounded))
+                        .font(.system(size: 24, weight: .semibold, design: .default))
                         .monospacedDigit()
                         .foregroundStyle(s.ourArrEpoch != nil ? WColor.primary : WColor.fg)
                 }
@@ -321,14 +322,14 @@ struct LockScreenActivityView: View {
                         Text(WFmt.delayShort(d)).font(.system(size: 11, weight: .bold)).foregroundStyle(WColor.delayColor(d))
                     }
                     if let p = s.platform {
-                        Text("bin \(p)").font(.system(size: 11)).monospacedDigit().foregroundStyle(WColor.muted)
+                        Text("Platform \(p)").font(.system(size: 11)).monospacedDigit().foregroundStyle(WColor.muted)
                     }
                 }
             }
             Spacer()
             VStack(spacing: 4) {
                 if s.ourArrEpoch != nil {
-                    Text("ours")
+                    Text("Arrival")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(WColor.primary)
                 }

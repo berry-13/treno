@@ -34,12 +34,14 @@ bin/stop.sh           # stop them (kills process trees, not just wrappers)
 
 ## The iOS app (apps/ios)
 
-SwiftUI, iOS 26.0+, Liquid Glass throughout: glass cards for runs and sections,
-glass toolbar buttons and search field, `backgroundExtensionEffect` scrolling,
-dark Flighty-style board. Features: live runs board with provider health,
-search, train page with the three time levels (Scheduled / Operator / Ours),
-confidence, per-source observation chips with ages and reporting-point
-locations, and the full stop timeline (passed dimmed, next highlighted).
+SwiftUI, iOS 26.0+, with native navigation, adaptive light/dark appearance,
+and three passenger-focused tabs: **Home**, **Stations**, and **Journeys**.
+Home focuses on your next saved journey and stations you have saved or used. Stations provides
+search, a map, departures, delays, and labeled platforms. Journey and train
+pages show departure/arrival times and a stop timeline; the scheduled,
+operator, and Treno estimates are available under **About these times**.
+Settings is accessed from the gear button on Home; local server setup is
+under **Data connection**. Saved routes and favorites stay on the device.
 
 ```bash
 cd apps/ios
@@ -55,7 +57,7 @@ xcodebuild -project Treno.xcodeproj -scheme Treno \
 ```
 
 - The simulator reaches the API at `http://127.0.0.1:8787` automatically.
-- A real device on the same Wi-Fi: in-app Settings (gear icon) → point at your
+- A real device on the same Wi-Fi: Home → Settings → Data connection → point at your
   Mac's LAN address, e.g. `http://192.168.1.20:8787`.
 - Demo deep link: `xcrun simctl launch booted com.treno.Treno --train 699`.
 

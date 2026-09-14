@@ -30,228 +30,171 @@ struct BoardResponse: Codable {
     let departures: [BoardDeparture]
 }
 
-// MARK: - board
+// MARK: - Departures
 
-/// The departures board for one station (the Stations tab). The passenger's
-/// question is "what leaves from here next?" — destination-first rows,
-/// live delays, quiet chrome.
 struct StationBoardView: View {
     @AppStorage("stationId") private var stationId = "S01700"
     @AppStorage("stationName") private var stationName = "Milano Centrale"
-
+    @StateObject private var store = TripStore.shared
     @State private var board: BoardResponse?
-    @State private var errorText: String?
+    @State private var failed = false
     @State private var loading = false
+    @State private var requestID = UUID()
     @State private var showPicker = false
     @State private var now = Date.now
-
     private let refresh = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    private var nowMs: Double { now.timeIntervalSince1970 * 1000 }
-
-    /// upcoming departures, plus trains that left this station in the last 10
-    /// minutes (still useful: "just missed it" / track it)
-    private var visible: [BoardDeparture] {
-        guard let board else { return [] }
-        let cut = nowMs - 10 * 60_000
-        return board.departures.filter { d in
-            if let a = d.actualDepEpoch { return a > cut }
-            return d.depEpoch > cut
+    private var departures: [BoardDeparture] {
+        let nowMs = now.timeIntervalSince1970 * 1000
+        return (board?.departures ?? []).filter { departure in
+            if let actual = departure.actualDepEpoch { return actual >= nowMs }
+            let expected = departure.depEpoch + Double(departure.depDelaySec ?? departure.state?.operatorDelaySec ?? 0) * 1000
+            return expected >= nowMs - 60_000
         }
     }
 
     var body: some View {
-        ZStack {
-            Color.tBg.ignoresSafeArea()
-            if let errorText, board == nil {
-                ContentUnavailableView {
-                    Label("Can't reach treno", systemImage: "wifi.exclamationmark")
-                } description: {
-                    Text(errorText)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                stationSelector
+                HStack {
+                    SectionHeading(title: "Departures")
+                    if loading && board == nil { ProgressView() }
+                    else if let board, !failed {
+                        Text("Updated \(Fmt.hhmm(board.generatedAt))")
+                            .font(.caption).foregroundStyle(.tMuted)
+                    }
                 }
-            } else if let board, visible.isEmpty {
-                ContentUnavailableView(
-                    "No departures",
-                    systemImage: "tram.fill",
-                    description: Text("Nothing is leaving \(stationName) in the next few hours.")
-                )
-            } else {
-                ScrollViewReader { proxy in
-                    List {
-                        Section {
-                            ForEach(visible) { d in
-                                row(d)
-                                    .listRowBackground(Color.clear)
-                                    .listRowSeparator(.hidden)
-                                    .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
+                if failed {
+                    TravelNotice(title: "Updates are unavailable", message: board == nil ? "Check your connection and try again." : "These are the last available departures. Pull down to try again.")
+                    if board == nil {
+                        Button("Try again") { Task { await load(stationId) } }
+                            .buttonStyle(.bordered).frame(maxWidth: .infinity)
+                    }
+                }
+                if board != nil && departures.isEmpty {
+                    ContentUnavailableView("No upcoming departures", systemImage: "tram", description: Text("Try another station or check back later."))
+                } else if !departures.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(Array(departures.enumerated()), id: \.element.id) { index, departure in
+                            if let runId = departure.runId {
+                                NavigationLink(value: runId) { DepartureRow(departure: departure) }
+                                    .buttonStyle(.plain)
+                            } else {
+                                DepartureRow(departure: departure)
                             }
+                            if index < departures.count - 1 { Divider().padding(.leading, 20) }
                         }
-                    }
-                    .scrollContentBackground(.hidden)
-                    .onAppear { maybeDebugScroll(proxy) }
-                    .onChange(of: board == nil) { _, _ in maybeDebugScroll(proxy) }
+                    }.background(Color.tCard, in: RoundedRectangle(cornerRadius: 22))
                 }
-            }
+            }.padding(.horizontal, 20).padding(.bottom, 28)
         }
-        .navigationTitle(stationName)
-        // solid bar once the large title collapses — no Liquid Glass mirror of
-        // scrolling rows, and no forced visibility (forcing it renders the
-        // inline title over the half-collapsed large title)
-        .toolbarBackground(Color.tBg, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showPicker = true
-                } label: {
-                    Image(systemName: "building.2")
-                }
-            }
-        }
-        .overlay(alignment: .top) {
-            if loading && board == nil {
-                ProgressView().tint(.tPrimary).padding(.top, 80)
-            }
-        }
+        .background { TrenoBackground() }
+        .navigationTitle("Stations")
         .sheet(isPresented: $showPicker) {
-            StationPickerSheet(currentId: stationId) { st in
-                stationId = st.stopId
-                stationName = st.name
-                TripStore.shared.noteUse(st.stopId)
-                board = nil
-                Task { await load() }
+            StationPickerSheet(currentId: stationId) { station in
+                stationName = station.name
+                stationId = station.id
+                store.noteUse(station.id)
             }
         }
-        .refreshable { await load() }
+        .task(id: stationId) {
+            board = nil
+            failed = false
+            await load(stationId)
+        }
         .onAppear {
-            if ProcessInfo.processInfo.arguments.contains("--picker") { showPicker = true }
-            Task { await load() }
+            if ProcessInfo.processInfo.arguments.contains("--picker") || ProcessInfo.processInfo.arguments.contains("--map") { showPicker = true }
         }
-        .onReceive(refresh) { _ in
-            guard !loading else { return }
-            Task { await load() }
+        .refreshable { await load(stationId) }
+        .onReceive(refresh) { date in
+            now = date
+            if !loading { Task { await load(stationId) } }
         }
-        .onReceive(ticker) { now = $0 }
     }
 
-    private func load() async {
+    private var stationSelector: some View {
+        GlassEffectContainer(spacing: 12) {
+            HStack(spacing: 12) {
+                Button { showPicker = true } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "tram.fill").foregroundStyle(.tPrimary)
+                        Text(stationName).font(.title3.weight(.semibold)).foregroundStyle(.tFg)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.tMuted)
+                    }
+                    .padding(.horizontal, 20).frame(minHeight: 60)
+                    .trenoGlass(cornerRadius: 30)
+                }.buttonStyle(.plain).accessibilityHint("Choose another station")
+                Button(store.favorites.contains(stationId) ? "Remove favorite" : "Favorite station",
+                       systemImage: store.favorites.contains(stationId) ? "star.fill" : "star") {
+                    store.toggleFavorite(stationId)
+                }
+                .labelStyle(.iconOnly).foregroundStyle(.tPrimary)
+                .frame(width: 54, height: 54).trenoGlass(cornerRadius: 27)
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func load(_ requestedId: String) async {
+        let request = UUID()
+        requestID = request
         loading = true
-        defer { loading = false }
+        defer { if requestID == request { loading = false } }
         do {
-            board = try await APIClient.shared.stationBoard(stopId: stationId)
-            errorText = nil
+            let response = try await APIClient.shared.stationBoard(stopId: requestedId)
+            guard requestID == request, requestedId == stationId, !Task.isCancelled else { return }
+            board = response
+            failed = false
         } catch {
-            errorText = error.localizedDescription
+            guard requestID == request, requestedId == stationId, !Task.isCancelled else { return }
+            failed = true
         }
     }
+}
 
-    /// debug hook: `simctl launch <dev> com.treno.Treno --scroll` scrolls the
-    /// board so collapsed-header states can be screenshotted
-    private func maybeDebugScroll(_ proxy: ScrollViewProxy) {
-        guard ProcessInfo.processInfo.arguments.contains("--scroll"),
-              let last = visible.last?.id else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            proxy.scrollTo(last, anchor: .top)
-        }
-    }
+private struct DepartureRow: View {
+    let departure: BoardDeparture
+    private var delay: Int? { departure.depDelaySec ?? departure.state?.operatorDelaySec }
+    private var cancelled: Bool { departure.state?.status == "cancelled" }
 
-    // MARK: departure row
-
-    @ViewBuilder
-    private func row(_ d: BoardDeparture) -> some View {
-        let status = d.state?.status
-        let cancelled = status == "cancelled"
-        let departed = d.actualDepEpoch != nil && d.actualDepEpoch! < nowMs
-        let delay = d.depDelaySec ?? d.state?.operatorDelaySec
-        let hasDelay = delay != nil && abs(delay!) >= 60
-        let estEpoch = d.depEpoch + Double(delay ?? 0) * 1000
-
-        let content = HStack(spacing: 12) {
-            // time: live estimate when delayed, scheduled below struck through
-            VStack(alignment: .leading, spacing: 1) {
-                if hasDelay {
-                    Text(Fmt.hhmm(estEpoch))
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(cancelled ? Color.tDanger : StatusUI.delayColor(delay))
-                    Text(Fmt.hhmm(d.depEpoch))
-                        .font(.system(size: 11))
-                        .monospacedDigit()
-                        .strikethrough()
-                        .foregroundStyle(.tDim)
-                } else {
-                    Text(Fmt.hhmm(d.depEpoch))
-                        .font(.system(size: 17, weight: departed ? .medium : .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(departed ? Color.tDim : Color.tFg)
-                }
-            }
-            .frame(width: 58, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(d.destinationName ?? d.state?.destination?.name ?? "—")
-                    .font(.system(size: 16, weight: departed ? .regular : .semibold))
-                    .foregroundStyle(departed ? Color.tMuted : Color.tFg)
-                    .strikethrough(cancelled, color: .tDanger)
-                    .lineLimit(1)
-                HStack(spacing: 7) {
-                    if let line = d.line {
-                        TBadge(line, .tPrimary)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(Fmt.hhmm(departure.depEpoch + Double(delay ?? 0) * 1000))
+                        .font(.title2.weight(.semibold)).monospacedDigit().foregroundStyle(.tFg)
+                        .strikethrough(cancelled)
+                    if let delay, abs(delay) >= 60 {
+                        Text(Fmt.hhmm(departure.depEpoch)).font(.footnote).strikethrough().foregroundStyle(.tMuted)
                     }
-                    Text(d.trainNumber)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .monospacedDigit()
-                        .foregroundStyle(.tDim)
-                    if status == "running" && !departed {
-                        HStack(spacing: 4) {
-                            Circle().fill(Color.tPrimary).frame(width: 5, height: 5)
-                            Text("live").font(.system(size: 10.5, weight: .semibold))
-                        }
-                        .foregroundStyle(.tPrimary)
-                    }
-                    if cancelled {
-                        TBadge("cancelled", .tDanger)
-                    } else if departed {
-                        Text("departed").font(.system(size: 11)).foregroundStyle(.tDim)
+                }.frame(minWidth: 65, alignment: .leading)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(departure.destinationName ?? departure.state?.destination?.name ?? "Destination unavailable")
+                        .font(.body.weight(.semibold)).foregroundStyle(.tFg).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 7) {
+                        if let line = departure.line { TBadge(line, .tPrimary) }
+                        else { Text("Train \(departure.trainNumber)").font(.footnote).foregroundStyle(.tMuted) }
                     }
                 }
+                Spacer(minLength: 0)
+                if departure.runId != nil { Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary).padding(.top, 6) }
+            }
+            if cancelled || delay != nil || Fmt.platform(departure.platform) != nil {
+                HStack {
+                    if cancelled || delay != nil {
+                        Label(cancelled ? "Cancelled" : Fmt.delayShort(delay),
+                              systemImage: cancelled ? "xmark.circle" : (delay ?? 0) >= 60 ? "clock.badge.exclamationmark" : "checkmark.circle")
+                            .foregroundStyle(cancelled ? Color.tDanger : StatusUI.delayColor(delay))
+                    }
+                    Spacer()
+                    if let platform = Fmt.platform(departure.platform) {
+                        Text("Platform \(platform)").foregroundStyle(.tMuted)
+                    }
+                }.font(.footnote)
             }
 
-            Spacer(minLength: 8)
-            trailing(d, delay: delay)
-            if d.runId != nil {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.tDim)
-            }
-        }
-
-        if let runId = d.runId {
-            NavigationLink(value: runId) {
-                content
-            }
-            .buttonStyle(.plain)
-        } else {
-            content.opacity(0.85)
-        }
-    }
-
-    /// platform chip when known, otherwise the delay itself
-    @ViewBuilder
-    private func trailing(_ d: BoardDeparture, delay: Int?) -> some View {
-        if let plat = d.platform, let n = Int(plat), n >= 1, n <= 30 {
-            Text(plat)
-                .font(.system(size: 13.5, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.tFg)
-                .frame(width: 26, height: 24)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-        } else if let s = delay, abs(s) >= 60 {
-            Text(Fmt.delayShort(s))
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(StatusUI.delayColor(s))
-                .frame(width: 30, alignment: .trailing)
-        }
+        }.padding(20).contentShape(Rectangle())
     }
 }

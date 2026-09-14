@@ -2,11 +2,13 @@ import SwiftUI
 
 @main
 struct TrenoApp: App {
+    @AppStorage("appearance") private var appearance = "system"
+
     var body: some Scene {
         WindowGroup {
             RootView()
             #if os(iOS)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
             #endif
         }
     }
@@ -16,7 +18,6 @@ enum TrenoTab: Int, Hashable {
     case home = 0
     case stations = 1
     case trips = 2
-    case settings = 3
 }
 
 struct RootView: View {
@@ -32,6 +33,7 @@ struct RootView: View {
                     HomeView(openStation: { stationId, name in
                         UserDefaults.standard.set(stationId, forKey: "stationId")
                         UserDefaults.standard.set(name, forKey: "stationName")
+                        boardPath = NavigationPath()
                         tab = .stations
                     })
                     .navigationDestination(for: Int.self) { id in
@@ -50,7 +52,7 @@ struct RootView: View {
                         }
                 }
             }
-            Tab("Trips", systemImage: "heart.fill", value: .trips) {
+            Tab("Journeys", systemImage: "bookmark.fill", value: .trips) {
                 NavigationStack(path: $tripsPath) {
                     TripsView()
                         .navigationDestination(for: Trip.self) { trip in
@@ -61,16 +63,9 @@ struct RootView: View {
                         }
                 }
             }
-            Tab("Settings", systemImage: "gearshape.fill", value: .settings) {
-                NavigationStack {
-                    SettingsView()
-                }
-            }
+
         }
         .tint(.tPrimary)
-        // flat chrome everywhere: no Liquid Glass reflections on the tab bar
-        .toolbarBackground(Color.tBg, for: .tabBar)
-        .toolbarBackground(Color.tBg, for: .navigationBar)
         .onAppear {
             let args = ProcessInfo.processInfo.arguments
             // debug deep links:

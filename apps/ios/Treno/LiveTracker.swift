@@ -8,7 +8,7 @@ extension TripActivityAttributes.ContentState {
             line: j.line,
             status: j.state?.status ?? "scheduled",
             delaySec: j.depDelaySec ?? j.state?.operatorDelaySec,
-            ourArrEpoch: j.state?.ourEstimate?.p50,
+            ourArrEpoch: j.expectedArrival,
             schedArrEpoch: j.arrEpoch,
             depEpoch: j.depEpoch,
             arrEpoch: j.arrEpoch,
@@ -27,10 +27,12 @@ enum LiveTracker {
     private static var trip: Trip?
 
     static var isTracking: Bool { activity != nil }
+    private(set) static var trackedRunId: Int?
 
-    static func start(trip: Trip, journey: JourneyRow) {
+    @discardableResult
+    static func start(trip: Trip, journey: JourneyRow) -> Bool {
         stop()
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return false }
         self.trip = trip
         let attributes = TripActivityAttributes(
             tripName: trip.displayName,
@@ -39,8 +41,10 @@ enum LiveTracker {
         )
         activity = try? Activity.request(
             attributes: attributes,
-            content: .init(state: TripActivityAttributes.ContentState.from(journey), staleDate: nil)
+            content: .init(state: TripActivityAttributes.ContentState.from(journey), staleDate: .now.addingTimeInterval(60))
         )
+        guard activity != nil else { return false }
+        trackedRunId = journey.runId
         let fromId = trip.fromStopId
         let toId = trip.toStopId
         let trainNumber = journey.trainNumber
@@ -51,22 +55,26 @@ enum LiveTracker {
                 nonisolated(unsafe) let handle = act
                 if let js = try? await APIClient.shared.journeys(from: fromId, to: toId, limit: 6),
                    let j = js.first(where: { $0.trainNumber == trainNumber }) {
-                    await handle.update(.init(state: TripActivityAttributes.ContentState.from(j), staleDate: nil))
+                    await handle.update(.init(state: TripActivityAttributes.ContentState.from(j), staleDate: .now.addingTimeInterval(60)))
                     if j.state?.status == "arrived" {
+                        LiveTracker.activity = nil
+                        LiveTracker.trackedRunId = nil
                         await handle.end(nil, dismissalPolicy: .after(.now + 120))
                         return
                     }
                 }
             }
         }
+        return true
     }
 
     static func stop() {
         updateTask?.cancel()
         updateTask = nil
+        let act = activity
+        activity = nil
+        trackedRunId = nil
         Task { @MainActor in
-            let act = LiveTracker.activity
-            LiveTracker.activity = nil
             if let act {
                 nonisolated(unsafe) let handle = act
                 await handle.end(nil, dismissalPolicy: .immediate)

@@ -1,341 +1,208 @@
 import SwiftUI
 
-/// The actual home: your trips live-summarized, favorite stations one tap
-/// away, network health at a glance. Not a data dump — a answer to
-/// "what do I care about right now?".
-struct HomeView: View {
-    /// set the board station and jump to the Stations tab
-    let openStation: (String, String) -> Void
+@MainActor
+final class JourneySummaries: ObservableObject {
+    @Published var next: [UUID: JourneyRow] = [:]
+    @Published var failed: Set<UUID> = []
+    @Published var hasLoaded = false
+    private var requestID = UUID()
 
-    @StateObject private var store = TripStore.shared
-    @State private var nextByTrip: [UUID: JourneyRow?] = [:]
-    @State private var nextByFavorite: [String: BoardDeparture?] = [:]
-    @State private var showAddTrip = false
-    @State private var now = Date.now
-
-    private let refresh = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
-
-    private var greeting: String {
-        let h = Calendar.current.component(.hour, from: now)
-        if h < 6 { return "Good night" }
-        if h < 12 { return "Good morning" }
-        if h < 18 { return "Good afternoon" }
-        return "Good evening"
-    }
-
-    private var favoriteStations: [(String, String)] {
-        store.favorites.sorted().compactMap { id in
-            guard let name = StationCatalog.shared.name(for: id) ?? knownName(id) else { return nil }
-            return (id, name)
-        }
-    }
-
-    var body: some View {
-        ZStack {
-            Color.tBg.ignoresSafeArea()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
-                    dateLine
-                    tripsSection
-                    if !favoriteStations.isEmpty {
-                        favoritesSection
-                    }
-                }
-                .padding(.top, 4)
-                .padding(.bottom, 40)
-            }
-        }
-        .navigationTitle(greeting)
-        .toolbarBackground(Color.tBg, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showAddTrip = true
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 20))
-                }
-            }
-        }
-        .sheet(isPresented: $showAddTrip) { AddTripView() }
-        .refreshable { await load() }
-        .task {
-            _ = try? await StationCatalog.shared.stations()
-            await load()
-        }
-        .onReceive(refresh) { _ in Task { await load() } }
-    }
-
-    private func load() async {
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await loadTripSummaries() }
-            group.addTask { await loadFavorites() }
-        }
-    }
-
-    private func loadTripSummaries() async {
-        guard !store.trips.isEmpty else { return }
-        await withTaskGroup(of: (UUID, JourneyRow?).self) { group in
-            for trip in store.trips where trip.runsToday {
+    func load(_ trips: [Trip]) async {
+        let request = UUID()
+        requestID = request
+        var values: [UUID: JourneyRow] = [:]
+        var errors: Set<UUID> = []
+        await withTaskGroup(of: (UUID, JourneyRow?, Bool).self) { group in
+            for trip in trips where trip.runsToday {
                 group.addTask {
-                    let js = (try? await APIClient.shared.journeys(from: trip.fromStopId, to: trip.toStopId, limit: 3)) ?? []
-                    let best = js.first { j in
-                        (j.actualDepEpoch == nil || j.state?.status == "running") && j.depEpoch + 10 * 60_000 > Date.now.timeIntervalSince1970 * 1000
-                    } ?? js.last
-                    return (trip.id, best)
+                    do {
+                        let rows = try await APIClient.shared.journeys(from: trip.fromStopId, to: trip.toStopId, limit: 8)
+                        return (trip.id, rows.first { $0.canBoard() }, false)
+                    } catch { return (trip.id, nil, true) }
                 }
             }
-            for await (id, next) in group {
-                nextByTrip[id] = next
+            for await (id, journey, failed) in group {
+                if let journey { values[id] = journey }
+                if failed { errors.insert(id) }
             }
         }
-    }
-
-    private func loadFavorites() async {
-        let favs = favoriteStations
-        guard !favs.isEmpty else { return }
-        await withTaskGroup(of: (String, BoardDeparture?).self) { group in
-            for (id, _) in favs {
-                group.addTask {
-                    let board = try? await APIClient.shared.stationBoard(stopId: id)
-                    let nowMs = Date.now.timeIntervalSince1970 * 1000
-                    let next = board?.departures.first { $0.depEpoch > nowMs - 10 * 60_000 }
-                    return (id, next)
-                }
-            }
-            for await (id, next) in group {
-                nextByFavorite[id] = next
-            }
-        }
-    }
-
-    // MARK: pieces
-
-    private var dateLine: some View {
-        Text(now.formatted(.dateTime.weekday(.wide).day().month(.wide)))
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.tMuted)
-            .padding(.horizontal, 20)
-    }
-
-    private var tripsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if store.trips.isEmpty {
-                Button {
-                    showAddTrip = true
-                } label: {
-                    VStack(spacing: 8) {
-                        Image(systemName: "heart")
-                            .font(.system(size: 24))
-                            .foregroundStyle(.tPrimary)
-                        Text("Save your first trip")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.tFg)
-                        Text("e.g. Sesto S.Giovanni → Arcore — you'll see the next train right here, every day.")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(.tMuted)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(24)
-                    .background(Color.tCard, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.tBorder))
-                }
-                .buttonStyle(.plain)
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(store.trips) { trip in
-                        NavigationLink(value: trip) {
-                            TripCard(trip: trip, next: nextByTrip[trip.id] ?? nil)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 20)
-            }
-        }
-    }
-
-    private var favoritesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(spacing: 0) {
-                ForEach(Array(favoriteStations.enumerated()), id: \.element.0) { i, fav in
-                    favoriteRow(fav)
-                    if i < favoriteStations.count - 1 {
-                        Rectangle().fill(Color.tBorder).frame(height: 0.7).padding(.horizontal, 20)
-                    }
-                }
-            }
-            .background(Color.tCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.tBorder))
-            .padding(.horizontal, 20)
-        }
-    }
-
-    private func favoriteRow(_ fav: (String, String)) -> some View {
-        let next = nextByFavorite[fav.0] ?? nil
-        let delay = next?.depDelaySec ?? next?.state?.operatorDelaySec
-        return Button {
-            store.noteUse(fav.0)
-            openStation(fav.0, fav.1)
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tLate)
-                    .frame(width: 18)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(fav.1)
-                        .font(.system(size: 15.5, weight: .semibold))
-                        .foregroundStyle(.tFg)
-                    if let n = next {
-                        Text("\(n.trainNumber) · \(n.destinationName ?? "")")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.tMuted)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer()
-                if let n = next {
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text(Fmt.hhmm(n.depEpoch + Double(delay ?? 0) * 1000))
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(delay != nil && delay! >= 60 ? StatusUI.delayColor(delay) : Color.tFg)
-                        if let l = n.line {
-                            Text(l)
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(.tPrimary)
-                        }
-                    }
-                } else {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.tDim)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// names we know without the catalog (suggestions, current board station, trips)
-    private func knownName(_ id: String) -> String? {
-        if id == UserDefaults.standard.string(forKey: "stationId") {
-            return UserDefaults.standard.string(forKey: "stationName")
-        }
-        for t in store.trips {
-            if t.fromStopId == id { return t.fromName }
-            if t.toStopId == id { return t.toName }
-        }
-        return nil
+        guard requestID == request, !Task.isCancelled else { return }
+        hasLoaded = true
+        next = values
+        failed = errors
     }
 }
 
-// MARK: - trip card (home)
+struct HomeView: View {
+    let openStation: (String, String) -> Void
+    @StateObject private var store = TripStore.shared
+    @StateObject private var summaries = JourneySummaries()
+    @State private var showAddTrip = false
+    @State private var showStations = false
+    @State private var showSettings = false
+    @State private var catalog: [StationLite] = []
+    private let refresh = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
-/// Big live card: route, countdown to departure, times with our estimate.
-struct TripCard: View {
-    let trip: Trip
-    let next: JourneyRow?
-
-    private var delay: Int? { next?.depDelaySec ?? next?.state?.operatorDelaySec }
-    private var estDep: Double? {
-        guard let j = next else { return nil }
-        return j.depEpoch + Double(delay ?? 0) * 1000
+    private var nextTrip: Trip? {
+        store.trips.filter { summaries.next[$0.id] != nil }
+            .min { summaries.next[$0.id]!.expectedDeparture < summaries.next[$1.id]!.expectedDeparture }
+            ?? store.trips.first
     }
-    private var arrDelay: Int? {
-        guard let j = next else { return nil }
-        if let ours = j.state?.ourEstimate, let sched = j.state?.schedArrEpoch {
-            return Int(((ours.p50 - sched) / 1000).rounded())
+    private var stations: [Station] {
+        let ids = store.favorites.isEmpty ? Array(store.frequentStations(limit: 3)) : store.favorites.sorted()
+        let resolved = ids.compactMap { id -> Station? in
+            let name = catalog.first { $0.stopId == id }?.name
+                ?? StationPickerSheet.suggested.first { $0.stopId == id }?.name
+                ?? store.trips.first { $0.fromStopId == id }?.fromName
+                ?? store.trips.first { $0.toStopId == id }?.toName
+            return name.map { Station(stopId: id, name: $0) }
         }
-        return delay
+        return resolved
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(trip.displayName)
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(.tFg)
-                        .lineLimit(1)
-                    HStack(spacing: 7) {
-                        if let j = next {
-                            if let line = j.line { TBadge(line, .tPrimary) }
-                            Text(j.trainNumber)
-                                .font(.system(size: 11.5, weight: .medium))
-                                .monospacedDigit()
-                                .foregroundStyle(.tDim)
-                            if j.state?.status == "running" {
-                                HStack(spacing: 4) {
-                                    Circle().fill(Color.tPrimary).frame(width: 5, height: 5)
-                                    Text("live").font(.system(size: 10.5, weight: .semibold))
-                                }
-                                .foregroundStyle(.tPrimary)
-                            }
-                        } else if !trip.runsToday {
-                            Text("not scheduled today")
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.tDim)
-                        } else {
-                            Text("no more trains today")
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.tDim)
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                GlassEffectContainer(spacing: 12) {
+                    HStack(spacing: 12) {
+                        Button { showStations = true } label: {
+                            Label("Find a station", systemImage: "magnifyingglass")
+                                .font(.body).foregroundStyle(.tFg)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 20).frame(minHeight: 54)
+                                .trenoGlass(cornerRadius: 27)
+                        }.buttonStyle(.plain)
+                        Button("Add journey", systemImage: "plus") { showAddTrip = true }
+                            .labelStyle(.iconOnly).font(.title3.weight(.medium))
+                            .frame(width: 54, height: 54)
+                            .trenoGlass(cornerRadius: 27)
+                            .buttonStyle(.plain)
                     }
                 }
-                Spacer(minLength: 10)
-                if let j = next, trip.runsToday {
-                    if j.state?.status == "running" {
-                        Text("now")
-                            .font(.system(size: 22, weight: .heavy, design: .rounded))
-                            .foregroundStyle(.tPrimary)
-                    } else if let est = estDep {
-                        let mins = Int(((est - Date.now.timeIntervalSince1970 * 1000) / 60_000).rounded())
-                        if mins >= 0 {
-                            Text(mins < 60 ? "in \(mins)m" : "in \(mins / 60)h\(mins % 60 != 0 ? " \(mins % 60)m" : "")")
-                                .font(.system(size: 22, weight: .heavy, design: .rounded))
-                                .monospacedDigit()
-                                .foregroundStyle(delay != nil && delay! >= 60 ? StatusUI.delayColor(delay) : Color.tPrimary)
-                        } else {
-                            Text("departed")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.tDim)
-                        }
-                    }
-                }
-            }
 
-            if let j = next, trip.runsToday {
-                HStack(spacing: 10) {
-                    Text(Fmt.hhmm(estDep ?? j.depEpoch))
-                        .font(.system(size: 19, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(delay != nil && abs(delay!) >= 60 ? StatusUI.delayColor(delay) : Color.tFg)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.tDim)
-                    Text(Fmt.hhmm(j.arrEpoch + Double(arrDelay ?? 0) * 1000))
-                        .font(.system(size: 19, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(arrDelay != nil && abs(arrDelay!) >= 60 ? StatusUI.delayColor(arrDelay) : (arrDelay != nil ? Color.tPrimary : Color.tFg))
-                    Spacer()
-                    if let p = j.platform, let n = Int(p), n >= 1, n <= 30 {
-                        Text(p)
-                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(.tFg)
-                            .frame(width: 26, height: 24)
-                            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 14) {
+                    if let trip = nextTrip {
+                        NavigationLink(value: trip) {
+                            TripCard(trip: trip, next: summaries.next[trip.id],
+                                     loading: !summaries.hasLoaded, failed: summaries.failed.contains(trip.id))
+                        }.buttonStyle(.plain)
+                    } else {
+                        VStack(alignment: .leading, spacing: 18) {
+                            Image(systemName: "tram.fill").font(.largeTitle).foregroundStyle(.tPrimary)
+                            Text("Make it your journey").font(.title2.weight(.semibold))
+                            Text("Save a route. Your next train will be right here.")
+                                .font(.body).foregroundStyle(.tMuted)
+                            Button("Add a journey", systemImage: "plus") { showAddTrip = true }
+                                .buttonStyle(.glassProminent).controlSize(.large)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(24).background(Color.tCard, in: RoundedRectangle(cornerRadius: 24))
                     }
+                }
+
+                if !stations.isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        SectionHeading(title: store.favorites.isEmpty ? "Recent stations" : "Your stations")
+                        VStack(spacing: 0) {
+                            ForEach(Array(stations.prefix(4).enumerated()), id: \.element.id) { index, station in
+                                Button {
+                                    store.noteUse(station.id)
+                                    openStation(station.id, station.name)
+                                } label: {
+                                    HStack(spacing: 14) {
+                                        Image(systemName: store.favorites.contains(station.id) ? "star.fill" : "clock")
+                                            .font(.body).foregroundStyle(.tPrimary).frame(width: 24)
+                                        Text(station.name).font(.body.weight(.medium)).foregroundStyle(.tFg)
+                                        Spacer(minLength: 4)
+                                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                                    }.padding(16).contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                                if index < min(stations.count, 4) - 1 { Divider().padding(.leading, 54) }
+                            }
+                        }.background(Color.tCard, in: RoundedRectangle(cornerRadius: 22))
+                    }
+                }
+            }.padding(.horizontal, 20).padding(.bottom, 28)
+        }
+        .background { TrenoBackground() }
+        .navigationTitle("For you")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Settings", systemImage: "gearshape") { showSettings = true }
+            }
+        }
+        .sheet(isPresented: $showAddTrip) { AddTripView() }
+        .sheet(isPresented: $showSettings) {
+            NavigationStack {
+                SettingsView().toolbar {
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { showSettings = false } }
                 }
             }
         }
-        .padding(16)
-        .background(Color.tCard, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.tBorder))
+        .sheet(isPresented: $showStations) {
+            StationPickerSheet(currentId: "") { station in openStation(station.id, station.name) }
+        }
+        .task { catalog = (try? await StationCatalog.shared.stations()) ?? [] }
+        .task(id: store.trips) { await summaries.load(store.trips) }
+        .refreshable { await summaries.load(store.trips) }
+        .onReceive(refresh) { _ in Task { await summaries.load(store.trips) } }
+    }
+}
+
+struct TripCard: View {
+    let trip: Trip
+    let next: JourneyRow?
+    var loading = false
+    var failed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(trip.name.isEmpty ? "Your next train" : trip.name)
+                    .font(.subheadline.weight(.medium)).foregroundStyle(.tMuted)
+                Spacer(minLength: 0)
+                if let next {
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text(Fmt.departure(next.expectedDeparture, now: context.date))
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.tPrimary)
+                    }
+                }
+            }
+            RouteEndpoints(from: trip.fromName, to: trip.toName)
+            if let next {
+                HStack(alignment: .center) {
+                    time(next.expectedDeparture, title: "Departure")
+                    Spacer()
+                    Image(systemName: "arrow.right").font(.subheadline).foregroundStyle(.tertiary)
+                    Spacer()
+                    time(next.expectedArrival, title: "Arrival", alignment: .trailing)
+                }
+                HStack(spacing: 10) {
+                    if let line = next.line { TBadge(line, .tPrimary) }
+                    if let platform = Fmt.platform(next.platform) {
+                        Text("Platform \(platform)").font(.footnote).foregroundStyle(.tMuted)
+                    }
+                    Spacer(minLength: 0)
+                    if let delay = next.departureDelay {
+                        Text(Fmt.delayShort(delay)).font(.footnote.weight(.medium))
+                            .foregroundStyle(StatusUI.delayColor(delay))
+                    }
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+            } else {
+                Text(loading ? "Finding your next train…" : failed ? "Updates unavailable · Tap to retry" : !trip.runsToday ? trip.daySummary : "No upcoming direct trains")
+                    .font(.subheadline).foregroundStyle(.tMuted)
+            }
+        }
+        .padding(24).background(Color.tCard, in: RoundedRectangle(cornerRadius: 28))
+        .accessibilityHint("View trains for this journey")
+    }
+
+    private func time(_ value: Double, title: String, alignment: HorizontalAlignment = .leading) -> some View {
+        VStack(alignment: alignment, spacing: 6) {
+            Text(title).font(.footnote).foregroundStyle(.tMuted)
+            Text(Fmt.hhmm(value)).font(.system(.largeTitle, weight: .medium))
+                .monospacedDigit().foregroundStyle(.tFg)
+        }
     }
 }

@@ -12,6 +12,7 @@ import { ensureRun, mapSourceKey, resolveRun, type RunRecord } from '#storage/ru
 import { fillPredictionOutcomes, insertObservation, insertServiceAlert, recordPrediction, saveState, upsertStopEvent } from '#storage/observations.ts';
 import { deriveSegmentObservations } from '#storage/segments.ts';
 import { predictHeuristic, recoveryPrediction, HEURISTIC_MODEL_VERSION } from './heuristic.ts';
+import { applyResidual, getResidualModel, type FeatureInput } from './model.ts';
 import type { ProviderStopEvent, ProviderTrainSnapshot } from '#providers/types.ts';
 import type { SnapshotInfo } from '#storage/rawStore.ts';
 
@@ -348,7 +349,34 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
     'SELECT stop_id, stop_sequence, sched_arr_epoch, sched_dep_epoch, actual_arr_epoch, actual_dep_epoch FROM train_stop_events WHERE run_id=? ORDER BY stop_sequence ASC, sched_arr_epoch ASC',
     [runId],
   );
-  const prediction = predictHeuristic(db, run, state, events);
+  let prediction = predictHeuristic(db, run, state, events);
+  // residual model (trained by `npm run train`) corrects the heuristic when
+  // it has proven itself on held-out data; loads lazily, hot-swaps on retrain
+  const residual = getResidualModel();
+  if (prediction && residual && state.schedArrEpoch != null) {
+    const fi: FeatureInput = {
+      generatedAt: Date.now(),
+      schedArrEpoch: state.schedArrEpoch,
+      operatorEtaEpoch: state.destinationOperatorEta,
+      ourP50: prediction.p50,
+      ourP10: prediction.p10,
+      ourP90: prediction.p90,
+      anchorKind: prediction.features.anchorKind,
+      remainingSegments: prediction.features.remainingSegments,
+      statsCoverage: prediction.features.statsCoverage,
+      corridorAdjustSec: prediction.features.corridorAdjustSec,
+      operatorWeight: prediction.features.operatorWeight,
+      independentP50: prediction.features.independentP50,
+    };
+    const corrected = applyResidual(residual, fi, prediction.p10, prediction.p50, prediction.p90);
+    prediction = {
+      ...prediction,
+      p10: corrected.p10,
+      p50: corrected.p50,
+      p90: corrected.p90,
+      modelVersion: corrected.modelVersion,
+    };
+  }
   if (prediction) {
     state.ourEstimate = {
       p10: prediction.p10,
@@ -370,8 +398,8 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
     // while cutting prediction volume several-fold)
     const last = getRow<{ our_p50: number | null; operator_eta_epoch: number | null; generated_at: number }>(
       db,
-      'SELECT our_p50, operator_eta_epoch, generated_at FROM predictions WHERE run_id=? AND model_version=? ORDER BY generated_at DESC LIMIT 1',
-      [runId, HEURISTIC_MODEL_VERSION],
+      'SELECT our_p50, operator_eta_epoch, generated_at FROM predictions WHERE run_id=? ORDER BY generated_at DESC LIMIT 1',
+      [runId],
     );
     const movedEnough = (a: number | null, b: number | null) =>
       a == null || b == null || Math.abs(a - b) > 30_000;
@@ -381,7 +409,7 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
       || Date.now() - last.generated_at > 120_000;
     if (due) {
       recordPrediction(db, {
-        modelVersion: HEURISTIC_MODEL_VERSION,
+        modelVersion: prediction.modelVersion,
         runId,
         stopId: state.destination.stopId,
         generatedAt: Date.now(),

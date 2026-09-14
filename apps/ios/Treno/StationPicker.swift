@@ -11,7 +11,9 @@ struct StationPickerSheet: View {
     @StateObject private var store = TripStore.shared
     @State private var query = ""
     @State private var results: [Station] = []
-    @State private var searchTask: Task<Void, Never>?
+    @State private var searching = false
+    @State private var searchFailed = false
+    @State private var catalog: [StationLite] = []
     @State private var showMap = false
 
     static let suggested: [Station] = [
@@ -36,7 +38,7 @@ struct StationPickerSheet: View {
                     Section("Results") {
                         ForEach(results) { st in stationRow(st) }
                         if results.isEmpty {
-                            Text("No stations found").foregroundStyle(.tDim)
+                            Text(searching ? "Searching…" : searchFailed ? "Search is unavailable. Please try again." : "No stations found").foregroundStyle(.tMuted)
                         }
                     }
                 } else {
@@ -56,6 +58,7 @@ struct StationPickerSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .background(Color.tBg)
             .searchable(
                 text: $query,
                 placement: .navigationBarDrawer(displayMode: .always),
@@ -66,7 +69,7 @@ struct StationPickerSheet: View {
                     Button {
                         showMap = true
                     } label: {
-                        Image(systemName: "map")
+                        Image(systemName: "map").accessibilityLabel("Browse station map")
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -74,10 +77,8 @@ struct StationPickerSheet: View {
                 }
             }
             .navigationTitle("Choose station")
-            .toolbarBackground(Color.tBg, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
         }
-        .preferredColorScheme(.dark)
         .tint(.tPrimary)
         .fullScreenCover(isPresented: $showMap) {
             MapStationsView { lite in
@@ -86,20 +87,25 @@ struct StationPickerSheet: View {
                 dismiss()
             }
         }
-        .onChange(of: query) { _, q in
-            searchTask?.cancel()
-            searchTask = Task {
-                try? await Task.sleep(for: .milliseconds(250))
+        .task(id: query) {
+            let text = trimmed
+            results = []
+            searchFailed = false
+            guard text.count >= 2 else { searching = false; return }
+            searching = true
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+                let matches = try await APIClient.shared.stations(query: text)
                 guard !Task.isCancelled else { return }
-                if let r = try? await APIClient.shared.stations(query: q) {
-                    results = r
-                }
+                results = matches
+                searching = false
+            } catch {
+                guard !Task.isCancelled else { return }
+                searching = false
+                searchFailed = true
             }
         }
-        .task {
-            // warm the catalog so favorites/frequent rows can resolve names
-            _ = try? await StationCatalog.shared.stations()
-        }
+        .task { catalog = (try? await StationCatalog.shared.stations()) ?? [] }
         .onAppear {
             if ProcessInfo.processInfo.arguments.contains("--map") { showMap = true }
         }
@@ -131,38 +137,34 @@ struct StationPickerSheet: View {
             m[t.fromStopId] = t.fromName
             m[t.toStopId] = t.toName
         }
-        if let cache = StationCatalog.shared.cache {
-            for st in cache { m[st.stopId] = st.name }
-        }
+        for st in catalog { m[st.stopId] = st.name }
         return m
     }
 
-    private func stationRow(_ st: Station) -> some View {
-        Button {
-            onSelect(st)
-            dismiss()
-        } label: {
-            HStack {
-                Text(st.name)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.tFg)
-                Spacer()
-                if st.stopId == currentId {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.tPrimary)
-                }
-                Button {
-                    store.toggleFavorite(st.stopId)
-                } label: {
-                    Image(systemName: store.favorites.contains(st.stopId) ? "star.fill" : "star")
-                        .font(.system(size: 14))
-                        .foregroundStyle(store.favorites.contains(st.stopId) ? Color.tLate : Color.tDim)
-                }
-                .buttonStyle(.borderless)
+    private func stationRow(_ station: Station) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                onSelect(station)
+                dismiss()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "tram.fill").foregroundStyle(.tPrimary)
+                    Text(station.name).font(.body).foregroundStyle(.tFg)
+                    Spacer(minLength: 0)
+                    if station.id == currentId {
+                        Image(systemName: "checkmark").font(.subheadline.weight(.semibold)).foregroundStyle(.tPrimary)
+                    }
+                }.frame(minHeight: 44).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            Button(store.favorites.contains(station.id) ? "Remove \(station.name) from favorites" : "Favorite \(station.name)",
+                   systemImage: store.favorites.contains(station.id) ? "star.fill" : "star") {
+                store.toggleFavorite(station.id)
             }
+            .labelStyle(.iconOnly).buttonStyle(.borderless)
+            .foregroundStyle(.tPrimary).frame(minWidth: 44, minHeight: 44)
         }
     }
+
 }
 
 // MARK: - map station browser
@@ -210,36 +212,26 @@ struct MapStationsView: View {
                 .presentationBackground(Color.tBg)
                 .presentationDragIndicator(.visible)
         }
-        .overlay(alignment: .topLeading) {
-            Button {
-                locateMe()
-            } label: {
-                Image(systemName: locating ? "location.fill" : "location")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.tPrimary)
-                    .frame(width: 42, height: 42)
-                    .glassEffect(.clear.interactive(), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .disabled(locating)
-            .padding(.leading, 16)
-            .padding(.top, 10)
+        .overlay(alignment: .top) {
+            GlassEffectContainer(spacing: 12) {
+                HStack {
+                    Button { locateMe() } label: {
+                        Image(systemName: locating ? "location.fill" : "location")
+                            .font(.body.weight(.semibold)).foregroundStyle(.tPrimary)
+                            .frame(width: 48, height: 48).trenoGlass(cornerRadius: 24)
+                    }
+                    .buttonStyle(.plain).disabled(locating)
+                    .accessibilityLabel("Show my location")
+                    Spacer()
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold)).foregroundStyle(.tFg)
+                            .frame(width: 48, height: 48).trenoGlass(cornerRadius: 24)
+                    }
+                    .buttonStyle(.plain).accessibilityLabel("Close map")
+                }
+            }.padding(.horizontal, 16).padding(.top, 10)
         }
-        .overlay(alignment: .topTrailing) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .frame(width: 42, height: 42)
-                    .glassEffect(.clear.interactive(), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(.trailing, 16)
-            .padding(.top, 10)
-        }
-        .preferredColorScheme(.dark)
         .tint(.tPrimary)
         .task {
             stations = (try? await StationCatalog.shared.stations()) ?? []
@@ -298,12 +290,12 @@ private struct StationSheet: View {
             Button {
                 onSelect(station)
             } label: {
-                Text("Choose")
+                Text("View departures")
                     .font(.system(size: 15, weight: .bold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 13)
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.glassProminent)
             .tint(.tPrimary)
             .padding(.horizontal, 20)
         }

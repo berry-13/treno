@@ -1,138 +1,96 @@
 import CoreLocation
 import SwiftUI
 
-/// Create a saved trip: pick origin (or use current location → nearest
-/// station), pick destination, name it, choose days.
 struct AddTripView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var store = TripStore.shared
-
     @State private var from: Station?
     @State private var to: Station?
     @State private var name = ""
-    @State private var pickingFrom = false
-    @State private var pickingTo = false
+    @State private var endpoint: Endpoint?
     @State private var locating = false
-    @State private var locHint: String?
-
-    private let loc = LocationFetcher()
+    @State private var locationMessage: String?
+    private let location = LocationFetcher()
+    private enum Endpoint: String, Identifiable { case from, to; var id: String { rawValue } }
+    private var canSave: Bool { from != nil && to != nil && from?.id != to?.id }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Route") {
-                    Button {
-                        pickingFrom = true
-                    } label: {
-                        endpointRow(label: "From", station: from, icon: "play.circle")
+                Section {
+                    Text("Where do you travel?").font(.title2.weight(.bold))
+                    Text("Save a route for quick access to its next trains.").foregroundStyle(.tMuted)
+                }.listRowBackground(Color.clear).listRowSeparator(.hidden)
+                Section {
+                    Button { endpoint = .from } label: { endpointRow("From", station: from, icon: "circle") }
+                    Button { endpoint = .to } label: { endpointRow("To", station: to, icon: "mappin.circle.fill") }
+                    if from != nil || to != nil {
+                        Button("Swap stations", systemImage: "arrow.up.arrow.down") { swap(&from, &to) }
                     }
-                    Button {
-                        useCurrentLocation()
-                    } label: {
-                        HStack {
-                            if locating {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Image(systemName: "location")
-                            }
-                            Text(locating ? "Locating…" : "Use my current location")
-                                .font(.system(size: 14))
-                            Spacer()
-                            if let locHint {
-                                Text(locHint).font(.system(size: 11)).foregroundStyle(.tDim)
-                            }
-                        }
-                        .foregroundStyle(.tPrimary)
-                    }
-                    .disabled(locating)
-                    Button {
-                        pickingTo = true
-                    } label: {
-                        endpointRow(label: "To", station: to, icon: "mappin.circle")
-                    }
-                }
-                Section("Name (optional)") {
-                    TextField("e.g. Home → Office", text: $name)
+                } header: { Text("Route") } footer: {
+                    if from != nil && from?.id == to?.id { Text("Choose two different stations.").foregroundStyle(.tDanger) }
                 }
                 Section {
-                    Text("Trips appear on the board with a live next-train summary. The first trip also drives the home-screen widget.")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.tDim)
+                    Button { useCurrentLocation() } label: {
+                        HStack {
+                            Label(locating ? "Finding your station…" : "Use nearest station", systemImage: "location")
+                            Spacer()
+                            if locating { ProgressView() }
+                        }
+                    }.disabled(locating)
+                    if let locationMessage { Text(locationMessage).font(.footnote).foregroundStyle(.tMuted) }
+                }
+                Section("Name your journey") {
+                    TextField("Optional, e.g. My commute", text: $name)
                 }
             }
-            .scrollContentBackground(.hidden)
-            .navigationTitle("New trip")
-            .toolbarBackground(Color.tBg, for: .navigationBar)
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("New journey").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        guard let from, let to else { return }
-                        store.add(Trip(fromStopId: from.stopId, fromName: from.name, toStopId: to.stopId, toName: to.name, name: name))
+                        guard let from, let to, canSave else { return }
+                        store.add(Trip(fromStopId: from.id, fromName: from.name, toStopId: to.id, toName: to.name, name: name.trimmingCharacters(in: .whitespacesAndNewlines)))
                         dismiss()
-                    }
-                    .foregroundStyle(.tPrimary)
-                    .disabled(from == nil || to == nil)
+                    }.disabled(!canSave)
                 }
             }
-            .sheet(isPresented: $pickingFrom) {
-                StationPickerSheet(currentId: from?.stopId ?? "") { st in
-                    from = st
-                    store.noteUse(st.stopId)
+            .sheet(item: $endpoint) { endpoint in
+                StationPickerSheet(currentId: (endpoint == .from ? from?.id : to?.id) ?? "") { station in
+                    if endpoint == .from { from = station } else { to = station }
+                    store.noteUse(station.id)
                 }
-                .presentationDetents([.medium, .large])
             }
-            .sheet(isPresented: $pickingTo) {
-                StationPickerSheet(currentId: to?.stopId ?? "") { st in
-                    to = st
-                    store.noteUse(st.stopId)
-                }
-                .presentationDetents([.medium, .large])
-            }
-        }
-        .preferredColorScheme(.dark)
-        .tint(.tPrimary)
+        }.tint(.tPrimary)
     }
 
-    private func endpointRow(label: String, station: Station?, icon: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 16))
-                .foregroundStyle(station == nil ? Color.tDim : Color.tPrimary)
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tDim)
-                Text(station?.name ?? "Choose station")
-                    .font(.system(size: 15, weight: station == nil ? .regular : .semibold))
-                    .foregroundStyle(station == nil ? Color.tMuted : Color.tFg)
+    private func endpointRow(_ label: String, station: Station?, icon: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon).foregroundStyle(.tPrimary).frame(width: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(label).font(.footnote).foregroundStyle(.tMuted)
+                Text(station?.name ?? "Choose a station").font(.body).foregroundStyle(station == nil ? Color.tMuted : .tFg)
             }
-            Spacer()
-            Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(.tDim)
-        }
+            Spacer(minLength: 4)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+        }.padding(.vertical, 6)
     }
 
     private func useCurrentLocation() {
         locating = true
-        locHint = nil
-        loc.requestOnce { location in
+        locationMessage = nil
+        location.requestOnce { result in
             Task { @MainActor in
-                locating = false
-                guard let location else {
-                    locHint = "unavailable"
+                defer { locating = false }
+                guard let result else {
+                    locationMessage = "Location is unavailable. You can choose a station above."
                     return
                 }
-                let coord = location.coordinate
-                if let nearest = StationCatalog.shared.nearest(to: coord) {
-                    from = Station(stopId: nearest.stopId, name: nearest.name)
-                    store.noteUse(nearest.stopId)
-                } else {
-                    locHint = "no station within 3 km"
-                }
+                _ = try? await StationCatalog.shared.stations()
+                if let nearest = StationCatalog.shared.nearest(to: result.coordinate) {
+                    from = Station(stopId: nearest.id, name: nearest.name)
+                    store.noteUse(nearest.id)
+                } else { locationMessage = "No station within 3 km. Choose a station above." }
             }
         }
     }

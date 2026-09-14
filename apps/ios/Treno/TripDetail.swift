@@ -1,249 +1,142 @@
 import SwiftUI
 
-/// A saved trip: the next direct trains origin→destination, live-fused, with
-/// day-of-week rules, renaming, and one-tap Live Activity tracking.
 struct TripDetailView: View {
     @State var trip: Trip
-
+    @Environment(\.dismiss) private var dismiss
     @State private var journeys: [JourneyRow] = []
-    @State private var errorText: String?
+    @State private var failed = false
+    @State private var loading = true
+    @State private var requestID = UUID()
     @State private var editing = false
-    @State private var now = Date.now
     @State private var trackingRunId: Int?
-
+    @State private var now = Date.now
+    @State private var trackingUnavailable = false
     private let store = TripStore.shared
     private let refresh = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-
-    private var nowMs: Double { now.timeIntervalSince1970 * 1000 }
-
     private var upcoming: [JourneyRow] {
-        journeys.filter { j in
-            j.depEpoch + 10 * 60_000 > nowMs || j.state?.status == "running"
-        }
+        journeys.filter { $0.canBoard(at: now) || $0.runId != nil && $0.runId == trackingRunId }
     }
 
     var body: some View {
-        ZStack {
-            Color.tBg.ignoresSafeArea()
-            ScrollView {
-                VStack(spacing: 0) {
-                    header
-                    if let errorText {
-                        Text(errorText).font(.footnote).foregroundStyle(.tDanger).padding(.top, 40)
-                    } else if upcoming.isEmpty {
-                        Text(trip.runsToday ? "No more direct trains today" : "Not scheduled today (\(daySummary))")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.tDim)
-                            .padding(.top, 60)
-                    } else {
-                        ForEach(Array(upcoming.enumerated()), id: \.element.id) { i, j in
-                            journeyRow(j, isNext: i == 0)
-                        }
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 20) {
+                    RouteEndpoints(from: trip.fromName, to: trip.toName)
+                    if trip.days.count != 7 { Text(trip.daySummary).font(.subheadline).foregroundStyle(.tMuted) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(22).background(Color.tCard, in: RoundedRectangle(cornerRadius: 24))
+                HStack {
+                    SectionHeading(title: "Next trains")
+                    if loading { ProgressView() }
                 }
-                .padding(.bottom, 48)
-            }
-            .backgroundExtensionEffect()
+                if failed {
+                    TravelNotice(title: "Updates are unavailable", message: "Check your connection and pull down to try again.")
+                    Button("Try again") { Task { await load() } }.buttonStyle(.bordered).frame(maxWidth: .infinity)
+                }
+                if !loading && !failed && upcoming.isEmpty {
+                    ContentUnavailableView("No upcoming direct trains", systemImage: "tram", description: Text("There are no direct services on this route in the current timetable window."))
+                }
+                ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, journey in
+                    VStack(spacing: 0) {
+                        if let runId = journey.runId {
+                            NavigationLink(value: runId) { journeyContent(journey, isNext: index == 0) }.buttonStyle(.plain)
+                        } else { journeyContent(journey, isNext: index == 0) }
+                        if journey.runId != nil {
+                            Button {
+                                guard let runId = journey.runId else { return }
+                                if trackingRunId == runId {
+                                    LiveTracker.stop()
+                                    trackingRunId = nil
+                                } else {
+                                    if LiveTracker.start(trip: trip, journey: journey) {
+                                        trackingRunId = runId
+                                    } else { trackingUnavailable = true }
+                                }
+                            } label: {
+                                Label(trackingRunId == journey.runId ? "Stop following" : "Follow this train",
+                                      systemImage: trackingRunId == journey.runId ? "stop.circle" : "livephoto")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity).frame(minHeight: 44)
+                            }
+                            .buttonStyle(.glass).tint(.tPrimary)
+                            .padding(.horizontal, 16).padding(.bottom, 16)
+                        }
+                    }.background(Color.tCard, in: RoundedRectangle(cornerRadius: 22))
+                }
+            }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 28)
         }
-        .navigationTitle("")
+        .background { TrenoBackground() }
+        .navigationTitle(trip.name.isEmpty ? "Journey" : trip.name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color.tBg, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Edit") { editing = true }
-            }
-        }
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Edit") { editing = true } } }
         .refreshable { await load() }
-        .onAppear { Task { await load() } }
-        .onReceive(refresh) { _ in Task { await load() } }
-        .onReceive(ticker) { now = $0 }
+        .task { trackingRunId = LiveTracker.trackedRunId; await load() }
+        .onReceive(refresh) { date in now = date; trackingRunId = LiveTracker.trackedRunId; Task { await load() } }
+        .alert("Live Activities are unavailable", isPresented: $trackingUnavailable) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Enable Live Activities for Treno in iPhone Settings to follow a train on your Lock Screen.")
+        }
         .sheet(isPresented: $editing) {
             TripEditSheet(trip: trip) { updated, action in
                 if action == .delete {
                     store.remove(trip)
+                    dismiss()
                 } else {
                     trip = updated
                     store.update(updated)
+                    Task { await load() }
                 }
-                Task { await load() }
             }
         }
-        .onDisappear { LiveTracker.stop() }
+    }
+
+    private func journeyContent(_ journey: JourneyRow, isNext: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                if let line = journey.line { TBadge(line, .tPrimary) }
+                Text("Train \(journey.trainNumber)").font(.footnote).foregroundStyle(.tMuted)
+                Spacer()
+                Text(Fmt.delayShort(journey.departureDelay)).font(.footnote.weight(.medium)).foregroundStyle(StatusUI.delayColor(journey.departureDelay))
+            }
+            HStack {
+                journeyTime(journey.expectedDeparture, label: "Departure")
+                Spacer()
+                VStack(spacing: 6) {
+                    Text("\(max(1, Int((journey.arrEpoch - journey.depEpoch) / 60_000))) min").font(.caption).foregroundStyle(.tMuted)
+                    Image(systemName: "arrow.right").font(.subheadline).foregroundStyle(.tertiary)
+                }
+                Spacer()
+                journeyTime(journey.expectedArrival, label: "Arrival", alignment: .trailing)
+            }
+            HStack {
+                Text(Fmt.departure(journey.expectedDeparture, now: now))
+                Spacer()
+                if let platform = Fmt.platform(journey.platform) { Text("Platform \(platform)") }
+                if journey.runId != nil { Image(systemName: "chevron.right").font(.caption.weight(.semibold)) }
+            }.font(.subheadline).foregroundStyle(.tMuted)
+        }.padding(20).contentShape(Rectangle())
+    }
+
+    private func journeyTime(_ epoch: Double, label: String, alignment: HorizontalAlignment = .leading) -> some View {
+        VStack(alignment: alignment, spacing: 5) {
+            Text(label).font(.footnote).foregroundStyle(.tMuted)
+            Text(Fmt.hhmm(epoch)).font(.title.weight(.medium)).monospacedDigit().foregroundStyle(.tFg)
+        }
     }
 
     private func load() async {
+        let request = UUID()
+        requestID = request
+        let currentTrip = trip
+        loading = true
+        defer { if requestID == request { loading = false } }
         do {
-            journeys = try await APIClient.shared.journeys(from: trip.fromStopId, to: trip.toStopId, limit: 10)
-            errorText = nil
-        } catch {
-            errorText = error.localizedDescription
-        }
-    }
-
-    // MARK: header
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(trip.fromName)
-                        .font(.system(size: 24, weight: .heavy, design: .rounded))
-                    Image(systemName: "arrow.down")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.tPrimary)
-                    Text(trip.toName)
-                        .font(.system(size: 24, weight: .heavy, design: .rounded))
-                }
-                .foregroundStyle(.tFg)
-                Spacer()
-                if let next = upcoming.first {
-                    trackButton(next)
-                }
-            }
-            HStack(spacing: 8) {
-                TBadge(daySummary, .tMuted)
-                if let next = upcoming.first, let line = next.line {
-                    TBadge(line, .tPrimary)
-                }
-            }
-        }
-        .padding(16)
-        .overlay(alignment: .bottom) { hairline }
-        .padding(.horizontal, 16)
-        .padding(.top, 6)
-    }
-
-    private func trackButton(_ j: JourneyRow) -> some View {
-        Button {
-            if trackingRunId == j.runId {
-                LiveTracker.stop()
-                trackingRunId = nil
-            } else {
-                LiveTracker.start(trip: trip, journey: j)
-                trackingRunId = j.runId
-            }
-        } label: {
-            VStack(spacing: 3) {
-                Image(systemName: trackingRunId == j.runId ? "stop.circle.fill" : "dot.radiowaves.left.and.right")
-                    .font(.system(size: 24))
-                Text(trackingRunId == j.runId ? "stop" : "track")
-                    .font(.system(size: 9.5, weight: .semibold))
-            }
-            .foregroundStyle(trackingRunId == j.runId ? Color.tDanger : Color.tPrimary)
-            .frame(width: 64)
-        }
-        .buttonStyle(.glass)
-        .disabled(j.runId == nil)
-    }
-
-    // MARK: journey row
-
-    private func journeyRow(_ j: JourneyRow, isNext: Bool) -> some View {
-        let running = j.state?.status == "running"
-        let delay = j.depDelaySec ?? j.state?.operatorDelaySec
-        let hasDelay = delay != nil && abs(delay!) >= 60
-        let estDep = j.depEpoch + Double(delay ?? 0) * 1000
-        let oursArr = j.state?.ourEstimate?.p50
-
-        let content = HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                if hasDelay {
-                    Text(Fmt.hhmm(estDep))
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(StatusUI.delayColor(delay))
-                    Text(Fmt.hhmm(j.depEpoch))
-                        .font(.system(size: 11))
-                        .monospacedDigit()
-                        .strikethrough()
-                        .foregroundStyle(.tDim)
-                } else {
-                    Text(Fmt.hhmm(j.depEpoch))
-                        .font(.system(size: 17, weight: isNext ? .bold : .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.tFg)
-                }
-            }
-            .frame(width: 58, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 7) {
-                    if let line = j.line { TBadge(line, .tPrimary) }
-                    Text(j.trainNumber)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .monospacedDigit()
-                        .foregroundStyle(.tDim)
-                    if running {
-                        HStack(spacing: 4) {
-                            Circle().fill(Color.tPrimary).frame(width: 5, height: 5)
-                            Text("live").font(.system(size: 10.5, weight: .semibold))
-                        }
-                        .foregroundStyle(.tPrimary)
-                    }
-                }
-                if let final = j.finalDestinationName, final != trip.toName {
-                    Text("via " + final)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.tMuted)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 1) {
-                if let ours = oursArr {
-                    Text(Fmt.hhmm(ours))
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.tPrimary)
-                    if ours != j.arrEpoch {
-                        Text(Fmt.hhmm(j.arrEpoch))
-                            .font(.system(size: 9.5))
-                            .monospacedDigit()
-                            .strikethrough()
-                            .foregroundStyle(.tDim)
-                    }
-                } else {
-                    Text(Fmt.hhmm(j.arrEpoch))
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.tFg)
-                }
-            }
-            .frame(width: 78, alignment: .trailing)
-        }
-        .padding(isNext ? 12 : 0)
-        .background {
-            if isNext {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.tPrimary.opacity(0.06))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.tPrimary.opacity(0.18)))
-            }
-        }
-
-        return Group {
-            if let runId = j.runId {
-                NavigationLink(value: runId) { content }.buttonStyle(.plain)
-            } else {
-                content.opacity(0.8)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-    }
-
-    private var hairline: some View {
-        Rectangle().fill(Color.tBorder).frame(height: 0.7)
-    }
-
-    private var daySummary: String {
-        if trip.days.count == 7 { return "every day" }
-        if trip.days == Set(1...5) { return "weekdays" }
-        if trip.days == Set([6, 7]) { return "weekends" }
-        let names = [1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"]
-        return trip.days.sorted().compactMap { names[$0] }.joined(separator: " ")
+            let result = try await APIClient.shared.journeys(from: currentTrip.fromStopId, to: currentTrip.toStopId, limit: 10)
+            guard requestID == request, !Task.isCancelled else { return }
+            journeys = result
+            failed = false
+        } catch { if requestID == request, !Task.isCancelled { failed = true } }
     }
 }
 
@@ -290,21 +183,23 @@ struct TripEditSheet: View {
                     }
                 }
                 Section("Runs on") {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 4) {
                         ForEach(dayLabels, id: \.0) { d, label in
                             Button {
                                 if trip.days.contains(d) { trip.days.remove(d) } else { trip.days.insert(d) }
                             } label: {
                                 Text(label)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .frame(width: 34, height: 34)
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(minWidth: 32, minHeight: 44)
                                     .background(
-                                        Circle().fill(trip.days.contains(d) ? Color.tPrimary.opacity(0.18) : Color.white.opacity(0.05))
+                                        Circle().fill(trip.days.contains(d) ? Color.tPrimary.opacity(0.18) : Color.tBg)
                                     )
                                     .overlay(Circle().strokeBorder(trip.days.contains(d) ? Color.tPrimary : Color.tBorder, lineWidth: 1))
                                     .foregroundStyle(trip.days.contains(d) ? Color.tPrimary : Color.tMuted)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][d - 1])
+                            .accessibilityValue(trip.days.contains(d) ? "Selected" : "Not selected")
                         }
                     }
                 }
@@ -313,17 +208,11 @@ struct TripEditSheet: View {
                         done(trip, .delete)
                         dismiss()
                     } label: {
-                        Label("Delete trip", systemImage: "trash")
+                        Label("Delete journey", systemImage: "trash")
                     }
                 }
-                Section {
-                    Text("The home-screen widget follows the first trip in Your Trips — reorder by dragging is coming; the first trip you keep is the widget trip.")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.tDim)
-                }
             }
-            .scrollContentBackground(.hidden)
-            .navigationTitle("Edit trip")
+            .navigationTitle("Edit journey")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -335,6 +224,7 @@ struct TripEditSheet: View {
                         dismiss()
                     }
                     .foregroundStyle(.tPrimary)
+                    .disabled(trip.fromStopId == trip.toStopId || trip.days.isEmpty)
                 }
             }
             .sheet(isPresented: $pickingFrom) {
@@ -352,7 +242,6 @@ struct TripEditSheet: View {
                 .presentationDetents([.medium, .large])
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func settingRow(_ label: String, _ value: String) -> some View {
@@ -360,7 +249,7 @@ struct TripEditSheet: View {
             Text(label).foregroundStyle(.tMuted)
             Spacer()
             Text(value).foregroundStyle(.tFg)
-            Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(.tDim)
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tDim)
         }
     }
 }

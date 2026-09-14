@@ -79,12 +79,7 @@ final class TripStore: ObservableObject {
     init() {
         suite = UserDefaults(suiteName: Self.suiteName)
         load()
-        if trips.isEmpty, !d.bool(forKey: "didSeedTrips") {
-            // the user's own commute, seeded so the feature shows itself
-            trips = [Trip(fromStopId: "S01325", fromName: "Sesto S.Giovanni", toStopId: "S01510", toName: "Arcore")]
-            save()
-            d.set(true, forKey: "didSeedTrips")
-        }
+
     }
 
     private func load() {

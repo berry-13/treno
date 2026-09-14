@@ -57,7 +57,7 @@ class CHSink {
   constructor() {
     const url = process.env.TRENO_CLICKHOUSE_URL;
     if (!url) return;
-    this.client = createClient({ url, request_timeout: 10_000, compression: { request: true } });
+    this.client = createClient({ url, request_timeout: 10_000 });
     process.on('beforeExit', () => {
       if (this.client) this.client.close();
     });
@@ -91,14 +91,15 @@ class CHSink {
   }
 
   /** Direct insert (flush path and ch:backfill). Tables must already exist
-   * (created by deploy/clickhouse-init/01_tables.sql on the server). */
+   * (created by the ch-init compose service / deploy SQL). Plain synchronous
+   * inserts: async_insert + request compression proved fragile across
+   * server versions, and ≤10k-row JSONEachRow batches don't need them. */
   async insert(table: string, rows: ChRow[]): Promise<void> {
     if (!this.client || rows.length === 0 || !isChTable(table)) return;
     await this.client.insert({
       table,
       values: rows,
       format: 'JSONEachRow',
-      clickhouse_settings: { async_insert: 1, wait_for_async_insert: 0 },
     });
   }
 

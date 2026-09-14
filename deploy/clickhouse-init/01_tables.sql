@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS train_observations (
   delay_seconds Nullable(Int32),
   location_id Nullable(String),
   location_name Nullable(String),
-  status LowCardinality(Nullable(String)),
+  status Nullable(String),
   quality_flags Nullable(String)
 ) ENGINE = MergeTree ORDER BY (run_id, ts, source);
 
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS service_alerts (
   stop_id Nullable(String),
   title Nullable(String),
   description Nullable(String),
-  severity LowCardinality(Nullable(String)),
+  severity Nullable(String),
   start_epoch Nullable(DateTime64(3)),
   end_epoch Nullable(DateTime64(3)),
   payload_hash String,

@@ -96,15 +96,19 @@ jobs:
       - name: ClickHouse mirror receiving rows
         run: |
           CF="docker compose -f docker-compose.yml -f docker-compose.ci.yml"
+          CHQ() { $CF exec -T clickhouse clickhouse-client --query "$1" 2>&1 || true; }
           last=""
           for i in $(seq 1 30); do
-            last=$($CF exec -T clickhouse clickhouse-client --query 'SELECT count() FROM train_runs' 2>&1) || true
+            last=$(CHQ 'SELECT count() FROM train_runs') || true
             case "$last" in *[!0-9]*|'') ;; *) [ "$last" -gt 0 ] && { echo "train_runs mirrored: $last"; exit 0; } ;; esac
             sleep 10
           done
-          echo "ClickHouse mirror stayed empty (last query output: $last)"
-          $CF logs --tail 300 collector | grep -Ei 'ch flush|error|warn' | tail -30 || true
-          $CF logs --tail 30 clickhouse || true
+          echo "ClickHouse mirror stayed empty (train_runs count: $last)"
+          echo "--- collector env:"; $CF exec -T collector printenv TRENO_CLICKHOUSE_URL || echo "ENV MISSING IN COLLECTOR"
+          echo "--- mirror counts:"; echo "train_observations: $(CHQ 'SELECT count() FROM train_observations')"
+          echo "--- inserts seen by server (query_log):"; CHQ "SELECT count() FROM system.query_log WHERE query ILIKE 'INSERT%' AND event_time > now() - 360"
+          echo "--- server-side insert exceptions:"; CHQ "SELECT exception, count() AS n FROM system.query_log WHERE type != 'QueryFinish' AND query ILIKE 'INSERT%' AND event_time > now() - 360 AND exception != '' GROUP BY exception ORDER BY n DESC LIMIT 5"
+          echo "--- collector ch warnings:"; $CF logs collector 2>&1 | grep -Ei 'ch flush' | tail -10 || true
           exit 1
 
       - name: Tear down

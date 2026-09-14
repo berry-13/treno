@@ -35,6 +35,7 @@ export interface FeatureInput {
   operatorEtaDriftSec: number | null;
   alertsRun24h: number | null;
   alertsRoute24h: number | null;
+  precipMm: number | null;
 }
 
 export const FEATURE_NAMES = [
@@ -58,6 +59,7 @@ export const FEATURE_NAMES = [
   'etaDrift',
   'alertsRun',
   'alertsRoute',
+  'precip',
 ] as const;
 
 const cap = (v: number, lim: number): number => Math.max(-lim, Math.min(lim, v));
@@ -91,6 +93,7 @@ export function featureRow(x: FeatureInput): number[] {
     cap(x.operatorEtaDriftSec ?? 0, 600) / 300,
     Math.min(x.alertsRun24h ?? 0, 10) / 5,
     Math.min(x.alertsRoute24h ?? 0, 10) / 5,
+    Math.min(x.precipMm ?? 0, 10) / 5,
   ];
 }
 

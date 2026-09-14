@@ -1,0 +1,13 @@
+# CI smoke override (.github/workflows/docker.yml): run the just-pushed GHCR
+# image instead of building locally, and keep the trainer idle — the smoke
+# checks health + live board data, not training.
+services:
+  collector:
+    build: !reset null
+    image: ${TRENO_IMAGE:-ghcr.io/berry-13/treno:latest}
+  api:
+    image: ${TRENO_IMAGE:-ghcr.io/berry-13/treno:latest}
+  trainer:
+    build: !reset null
+    image: ${TRENO_IMAGE:-ghcr.io/berry-13/treno:latest}
+    command: ["sleep", "infinity"]

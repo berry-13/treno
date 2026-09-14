@@ -1,0 +1,41 @@
+/**
+ * Hourly weather signal for the model (rain measurably slows Lombardy rail).
+ * Open-Meteo, no key. Anchored on three points across the network; the
+ * feature served is the mean current-hour precipitation.
+ */
+import { log } from '#core/log.ts';
+
+const POINTS = [
+  { name: 'milano', lat: 45.46, lon: 9.19 },
+  { name: 'brescia', lat: 45.54, lon: 10.21 },
+  { name: 'varese', lat: 45.82, lon: 8.82 },
+];
+
+let cached: { at: number; precipMm: number | null } = { at: 0, precipMm: null };
+
+export function currentPrecipMm(): number | null {
+  return Date.now() - cached.at < 3 * 3600_000 ? cached.precipMm : null;
+}
+
+export async function refreshWeather(): Promise<void> {
+  try {
+    const vals: number[] = [];
+    for (const p of POINTS) {
+      const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + p.lat + '&longitude=' + p.lon + '&hourly=precipitation&past_days=0&forecast_days=1';
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const j = (await res.json()) as { hourly?: { time: string[]; precipitation: number[] } };
+      const now = new Date();
+      const times = j.hourly?.time ?? [];
+      const precip = j.hourly?.precipitation ?? [];
+      const idx = times.findIndex((t) => t.startsWith(now.toISOString().slice(0, 13)));
+      if (idx >= 0 && precip[idx] != null) vals.push(precip[idx]!);
+    }
+    if (vals.length > 0) {
+      cached = { at: Date.now(), precipMm: Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 };
+      log.info('weather refreshed', { precipMm: cached.precipMm, points: vals.length });
+    }
+  } catch (e) {
+    log.warn('weather refresh failed', { error: String(e) });
+  }
+}

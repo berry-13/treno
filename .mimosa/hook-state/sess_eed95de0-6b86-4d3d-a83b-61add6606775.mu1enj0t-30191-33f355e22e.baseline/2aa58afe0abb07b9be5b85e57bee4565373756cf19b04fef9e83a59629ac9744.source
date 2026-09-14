@@ -48,6 +48,9 @@ export interface HeuristicPrediction {
     originDepDelaySec: number | null;      // how late this train left its origin
     trainHistoryDelaySec: number | null;   // median recent arrival delay of this train number
     networkDelaySec: number | null;        // mean live delay across the network right now
+    operatorEtaDriftSec: number | null;    // operator ETA movement over the last ~5 min
+    alertsRun24h: number | null;           // alerts attached to this run (24h)
+    alertsRoute24h: number | null;         // alerts at this route's stops (24h)
   };
 }
 
@@ -141,6 +144,7 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
     modelVersion: HEURISTIC_MODEL_VERSION,
     features: ((): HeuristicPrediction['features'] => {
       const ctx = contextFeatures(db, run);
+      const al = alertFeatures(db, run);
       return {
         anchorKind,
         anchorStopId: anchorIdx >= 0 ? events[anchorIdx]!.stop_id : null,
@@ -153,6 +157,9 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
         originDepDelaySec: ctx.originDepDelaySec,
         trainHistoryDelaySec: ctx.trainHistoryDelaySec,
         networkDelaySec: networkDelayNow(db),
+        operatorEtaDriftSec: operatorEtaDrift(db, run.id, state.destinationOperatorEta),
+        alertsRun24h: al.onRun,
+        alertsRoute24h: al.onRoute,
       };
     })(),
   };
@@ -177,6 +184,32 @@ function contextFeatures(db: Db, run: RunRecord): { originDepDelaySec: number | 
     trainHistoryDelaySec = ds[Math.floor(ds.length / 2)]!;
   }
   return { originDepDelaySec: origin != null ? Math.round(origin.d / 1000) : null, trainHistoryDelaySec };
+}
+
+/** how fast the operator's own ETA is moving (projected to 5 min) — a
+ *  drifting ETA predicts more drift; position alone doesn't show it */
+function operatorEtaDrift(db: Db, runId: number, etaNow: number | null): number | null {
+  if (etaNow == null) return null;
+  const rows = getRows<{ operator_eta_epoch: number; generated_at: number }>(
+    db,
+    'SELECT operator_eta_epoch, generated_at FROM predictions WHERE run_id=? AND operator_eta_epoch IS NOT NULL ORDER BY generated_at DESC LIMIT 2',
+    [runId],
+  );
+  if (rows.length < 2) return null;
+  const dt = (rows[0]!.generated_at - rows[1]!.generated_at) / 1000;
+  if (dt < 30) return null;
+  return Math.round(((rows[0]!.operator_eta_epoch - rows[1]!.operator_eta_epoch) / 1000 / dt) * 300);
+}
+
+function alertFeatures(db: Db, run: RunRecord): { onRun: number; onRoute: number } {
+  const since = Date.now() - 24 * 3600_000;
+  const onRun = (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM service_alerts WHERE run_id=? AND created_at > ?', [run.id, since]) ?? { n: 0 }).n;
+  const onRoute = (getRow<{ n: number }>(
+    db,
+    'SELECT COUNT(*) AS n FROM service_alerts WHERE created_at > ? AND stop_id IN (SELECT stop_id FROM train_stop_events WHERE run_id=?)',
+    [since, run.id],
+  ) ?? { n: 0 }).n;
+  return { onRun: Math.min(onRun, 10), onRoute: Math.min(onRoute, 10) };
 }
 
 function networkDelayNow(db: Db): number | null {

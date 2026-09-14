@@ -72,6 +72,7 @@ function extract(): TrainRow[] {
         operatorEtaDriftSec: f.operatorEtaDriftSec ?? null,
         alertsRun24h: f.alertsRun24h ?? null,
         alertsRoute24h: f.alertsRoute24h ?? null,
+        precipMm: f.precipMm ?? null,
       },
       label: r.our_error_sec,
       operatorErrorSec: r.operator_error_sec,
@@ -129,6 +130,7 @@ function buildStopLevel(): { X: number[][]; y: number[] } {
       operatorEtaDriftSec: null,
       alertsRun24h: null,
       alertsRoute24h: null,
+      precipMm: null,
     };
     X.push(featureRow(fi));
     y.push(label);

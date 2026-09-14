@@ -373,6 +373,7 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
       operatorEtaDriftSec: prediction.features.operatorEtaDriftSec,
       alertsRun24h: prediction.features.alertsRun24h,
       alertsRoute24h: prediction.features.alertsRoute24h,
+      precipMm: prediction.features.precipMm,
     };
     const corrected = applyResidual(residual, fi, prediction.p10, prediction.p50, prediction.p90);
     prediction = {

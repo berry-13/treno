@@ -57,7 +57,13 @@ class CHSink {
   constructor() {
     const url = process.env.TRENO_CLICKHOUSE_URL;
     if (!url) return;
-    this.client = createClient({ url, request_timeout: 10_000 });
+    // best_effort: the client serializes Date as ISO-8601 with a trailing
+    // 'Z'; older servers' default 'basic' parser rejects the offset suffix.
+    this.client = createClient({
+      url,
+      request_timeout: 10_000,
+      clickhouse_settings: { date_time_input_format: 'best_effort' },
+    });
     process.on('beforeExit', () => {
       if (this.client) this.client.close();
     });

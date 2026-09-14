@@ -1,10 +1,10 @@
 {
   "schemaVersion": "mimosa-hook-status/v1",
-  "recordedAt": "2026-09-14T15:38:48.939Z",
+  "recordedAt": "2026-09-14T17:07:33.308Z",
   "sessionId": "sess_eed95de0-6b86-4d3d-a83b-61add6606775",
   "event": "PostToolUse",
   "toolName": "Write",
-  "file": "bin/com.treno.train.plist",
+  "file": "PLAN_next_features.md",
   "outcome": "clear",
   "coverage": "complete",
   "findingCount": 0,

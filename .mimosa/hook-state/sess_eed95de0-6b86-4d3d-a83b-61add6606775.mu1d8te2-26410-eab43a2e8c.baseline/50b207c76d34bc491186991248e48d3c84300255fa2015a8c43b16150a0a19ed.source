@@ -28,6 +28,9 @@ export interface FeatureInput {
   corridorAdjustSec: number;
   operatorWeight: number;
   independentP50: number | null;
+  originDepDelaySec: number | null;
+  trainHistoryDelaySec: number | null;
+  networkDelaySec: number | null;
 }
 
 export const FEATURE_NAMES = [
@@ -45,6 +48,9 @@ export const FEATURE_NAMES = [
   'hourSin',
   'hourCos',
   'peak',
+  'originDepDelay',
+  'trainHistoryDelay',
+  'networkDelay',
 ] as const;
 
 const cap = (v: number, lim: number): number => Math.max(-lim, Math.min(lim, v));
@@ -72,7 +78,16 @@ export function featureRow(x: FeatureInput): number[] {
     Math.sin((2 * Math.PI * hour) / 24),
     Math.cos((2 * Math.PI * hour) / 24),
     peak,
+    cap(x.originDepDelaySec ?? 0, 1800) / 600,
+    cap(x.trainHistoryDelaySec ?? 0, 1800) / 600,
+    cap(x.networkDelaySec ?? 0, 900) / 300,
   ];
+}
+
+export interface ConformalBucket {
+  /** predictions with horizonSec <= maxHorizonSec use this band half-width */
+  maxHorizonSec: number;
+  offsetSec: number;
 }
 
 export interface ResidualModel {
@@ -85,6 +100,8 @@ export interface ResidualModel {
   ridge: number[];
   pin10: number[];
   pin90: number[];
+  /** split-conformal band half-widths per horizon bucket (80% central) */
+  conformal?: ConformalBucket[];
 }
 
 let cached: { file: string; mtime: number; model: ResidualModel | null } | null = null;
@@ -126,12 +143,22 @@ export function applyResidual(model: ResidualModel, x: FeatureInput, p10: number
   const row = featureRow(x);
   const corrSec = dot(model.ridge, row);
   const newP50 = p50 + corrSec * 1000;
-  // quantile offsets replace the hand-tuned spread
-  const off10 = dot(model.pin10, row) * 1000;
-  const off90 = dot(model.pin90, row) * 1000;
+  // conformal bands when available (distribution-free ~80% coverage),
+  // pinball offsets as fallback
+  let off10: number;
+  let off90: number;
+  if (model.conformal && model.conformal.length > 0) {
+    const horizonSec = x.schedArrEpoch != null ? Math.max(0, (x.schedArrEpoch - x.generatedAt) / 1000) : 1800;
+    const bucket = model.conformal.find((b) => horizonSec <= b.maxHorizonSec) ?? model.conformal[model.conformal.length - 1]!;
+    off10 = -bucket.offsetSec * 1000;
+    off90 = bucket.offsetSec * 1000;
+  } else {
+    off10 = dot(model.pin10, row) * 1000;
+    off90 = dot(model.pin90, row) * 1000;
+  }
   return {
-    p10: Math.min(newP50 + Math.min(off10, -30_000), p10),
-    p90: Math.max(newP50 + Math.max(off90, 30_000), p90),
+    p10: newP50 + Math.min(off10, -30_000),
+    p90: newP50 + Math.max(off90, 30_000),
     p50: newP50,
     modelVersion: RESIDUAL_MODEL_VERSION,
     correctionSec: Math.round(corrSec),

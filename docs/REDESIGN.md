@@ -53,3 +53,13 @@ use native Liquid Glass. Related controls use GlassEffectContainer, with
 soft background color giving the material depth. Timetables stay on opaque
 content surfaces. Custom glass and background effects fall back to solid
 system surfaces for Reduce Transparency or Increase Contrast.
+
+This refinement was built and launched with zero compiler warnings or errors.
+The home screen was visually checked in Light and Dark, and the glass search
+control and simplified station board were exercised in the simulator.
+During verification, an API response containing a null optional prediction
+was found to prevent the entire board from decoding. TrainState now discards
+only the unavailable estimate. A Swift fixture check verified the real board
+(45 departures), valid/null/absent estimates, and strict decoding of unrelated
+fields. Widget prediction bounds are also optional. Current captures are
+`glass-home-light.jpg`, `glass-home-dark.jpg`, and `glass-stations-dark.jpg`.

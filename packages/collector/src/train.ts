@@ -16,6 +16,7 @@ import { loadConfig } from '#core/config.ts';
 import { log } from '#core/log.ts';
 import { openTrenoDb } from '#gtfs/setup.ts';
 import { FEATURE_NAMES, featureRow, type FeatureInput, type ResidualModel, type ConformalBucket } from './model.ts';
+import { fitGBM, predictGBM, type GBMForest } from './gbm.ts';
 import { RESIDUAL_MODEL_VERSION } from './model.ts';
 
 interface TrainRow {
@@ -162,6 +163,21 @@ function main() {
   const ridge = ridgeFit(Xtr, ytr, 1.0);
   const pin10 = pinballFit(Xtr, ytr, 0.10);
   const pin90 = pinballFit(Xtr, ytr, 0.90);
+  const t0 = Date.now();
+  const gbm = fitGBM(Xtr, ytr, 150, 0.08, 3, 40);
+  log.info('train: gbm fitted', { ms: Date.now() - t0, trees: gbm.trees.length });
+
+  // pick the correction with the lower validation MAE — GBM captures the
+  // interactions the linear model can't; ridge stays if it wins on little data
+  let maeRidge = 0, maeGbm = 0;
+  for (let i = 0; i < val.length; i++) {
+    maeRidge += Math.abs(yva[i]! - Math.max(-1200, Math.min(1200, dot(ridge, Xva[i]!))));
+    maeGbm += Math.abs(yva[i]! - Math.max(-1200, Math.min(1200, predictGBM(gbm, Xva[i]!))));
+  }
+  const useGbm = maeGbm < maeRidge;
+  const corrOf = (i: number): number =>
+    Math.max(-1200, Math.min(1200, useGbm ? predictGBM(gbm, Xva[i]!) : dot(ridge, Xva[i]!)));
+  log.info('train: method selection', { maeRidge: Math.round(maeRidge / val.length), maeGbm: Math.round(maeGbm / val.length), useGbm });
 
   let maeHeur = 0, maeModel = 0, maeOp = 0, opN = 0, covHeur = 0, covModel = 0;
   // split-conformal: per-horizon-bucket absolute-residual quantiles give a
@@ -171,7 +187,7 @@ function main() {
   for (let i = 0; i < val.length; i++) {
     const y = yva[i]!;
     maeHeur += Math.abs(y);
-    const corr = Math.max(-1200, Math.min(1200, dot(ridge, Xva[i]!)));
+    const corr = corrOf(i);
     maeModel += Math.abs(y - corr);
     if (val[i]!.operatorErrorSec != null) {
       maeOp += Math.abs(val[i]!.operatorErrorSec!);
@@ -195,7 +211,7 @@ function main() {
   for (let i = 0; i < val.length; i++) {
     const f = val[i]!.features;
     const y = yva[i]!;
-    const corr = Math.max(-1200, Math.min(1200, dot(ridge, Xva[i]!)));
+    const corr = corrOf(i);
     const horizonSec = f.schedArrEpoch != null ? Math.max(0, (f.schedArrEpoch - f.generatedAt) / 1000) : 1800;
     const bucket = conformal.find((b) => horizonSec <= b.maxHorizonSec) ?? conformal[conformal.length - 1]!;
     if (Math.abs(y - corr) <= bucket.offsetSec) covModel++;
@@ -227,6 +243,8 @@ function main() {
       model: Math.round((covModel / val.length) * 100) / 100,
     },
     ridge, pin10, pin90, conformal,
+    method: useGbm ? 'gbm' : 'ridge',
+    gbm: useGbm ? gbm : undefined,
   };
   const dir = join(loadConfig().dataDir, 'models');
   mkdirSync(dir, { recursive: true });

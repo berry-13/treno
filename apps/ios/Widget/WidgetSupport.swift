@@ -58,7 +58,7 @@ struct WJourney: Codable {
         let ourEstimate: WOurs?
         let destination: WPlace?
         struct WPlace: Codable { let name: String? }
-        struct WOurs: Codable { let p10: Double; let p50: Double; let p90: Double }
+        struct WOurs: Codable { let p10: Double?; let p50: Double?; let p90: Double? }
     }
 }
 

@@ -10,7 +10,7 @@
  *
  * Never presented as operator data: outputs carry modelVersion + provenance.
  */
-import { getRows, type Db } from '#core/db.ts';
+import { getRow, getRows, type Db } from '#core/db.ts';
 import { statsForSegment, corridorDelta, segmentId } from '#storage/segments.ts';
 import type { RunRecord } from '#storage/runs.ts';
 import type { FusedState } from './pipeline.ts';
@@ -44,6 +44,10 @@ export interface HeuristicPrediction {
     corridorAdjustSec: number;
     operatorWeight: number;
     independentP50: number;
+    // context features (computed by the pipeline, learned by future models)
+    originDepDelaySec: number | null;      // how late this train left its origin
+    trainHistoryDelaySec: number | null;   // median recent arrival delay of this train number
+    networkDelaySec: number | null;        // mean live delay across the network right now
   };
 }
 
@@ -135,17 +139,53 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
     p10, p50, p90,
     confidence: Math.max(0.05, Math.min(0.95, confidence)),
     modelVersion: HEURISTIC_MODEL_VERSION,
-    features: {
-      anchorKind,
-      anchorStopId: anchorIdx >= 0 ? events[anchorIdx]!.stop_id : null,
-      anchorEpoch,
-      remainingSegments: segments.length,
-      statsCoverage: Math.round(coverage * 100) / 100,
-      corridorAdjustSec: Math.round(corridorAdjTotal),
-      operatorWeight: wOp,
-      independentP50,
-    },
+    features: ((): HeuristicPrediction['features'] => {
+      const ctx = contextFeatures(db, run);
+      return {
+        anchorKind,
+        anchorStopId: anchorIdx >= 0 ? events[anchorIdx]!.stop_id : null,
+        anchorEpoch,
+        remainingSegments: segments.length,
+        statsCoverage: Math.round(coverage * 100) / 100,
+        corridorAdjustSec: Math.round(corridorAdjTotal),
+        operatorWeight: wOp,
+        independentP50,
+        originDepDelaySec: ctx.originDepDelaySec,
+        trainHistoryDelaySec: ctx.trainHistoryDelaySec,
+        networkDelaySec: networkDelayNow(db),
+      };
+    })(),
   };
+}
+
+/** Context features the heuristic doesn't use but future trained models do.
+ *  Kept deliberately cheap (single-row lookups). */
+function contextFeatures(db: Db, run: RunRecord): { originDepDelaySec: number | null; trainHistoryDelaySec: number | null } {
+  const origin = getRow<{ d: number }>(
+    db,
+    'SELECT (e.actual_dep_epoch - e.sched_dep_epoch) AS d FROM train_stop_events e WHERE e.run_id=? AND e.stop_id=? AND e.actual_dep_epoch IS NOT NULL AND e.sched_dep_epoch IS NOT NULL',
+    [run.id, run.origin_stop_id ?? ''],
+  );
+  const hist = getRows<{ d: number }>(
+    db,
+    'SELECT e.arr_delay_sec AS d FROM train_stop_events e JOIN train_runs r ON r.id=e.run_id WHERE r.train_number=? AND e.stop_id=r.destination_stop_id AND e.arr_delay_sec IS NOT NULL AND e.actual_arr_epoch>? ORDER BY e.actual_arr_epoch DESC LIMIT 20',
+    [run.train_number, Date.now() - 14 * 86400_000],
+  );
+  let trainHistoryDelaySec: number | null = null;
+  if (hist.length >= 3) {
+    const ds = hist.map((h) => h.d).sort((a, b) => a - b);
+    trainHistoryDelaySec = ds[Math.floor(ds.length / 2)]!;
+  }
+  return { originDepDelaySec: origin != null ? Math.round(origin.d / 1000) : null, trainHistoryDelaySec };
+}
+
+function networkDelayNow(db: Db): number | null {
+  const r = getRow<{ m: number }>(
+    db,
+    "SELECT AVG(CAST(json_extract(state_json,'$.operatorDelaySec') AS REAL)) AS m FROM train_state WHERE updated_at > ? AND json_extract(state_json,'$.operatorDelaySec') IS NOT NULL",
+    [Date.now() - 10 * 60_000],
+  );
+  return r?.m != null ? Math.round(r.m) : null;
 }
 
 /** Expected delay change from now to destination (positive = recovering). */

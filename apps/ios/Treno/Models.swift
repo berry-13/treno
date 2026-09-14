@@ -47,6 +47,34 @@ struct TrainState: Codable, Hashable {
     var quality: [String]?
 }
 
+// An unavailable optional prediction must not hide the station timetable.
+extension TrainState {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        runId = try values.decodeIfPresent(Int.self, forKey: .runId)
+        runCode = try values.decodeIfPresent(String.self, forKey: .runCode)
+        trainNumber = try values.decodeIfPresent(String.self, forKey: .trainNumber)
+        serviceDate = try values.decodeIfPresent(String.self, forKey: .serviceDate)
+        origin = try values.decodeIfPresent(Place.self, forKey: .origin)
+        destination = try values.decodeIfPresent(Place.self, forKey: .destination)
+        schedDepEpoch = try values.decodeIfPresent(Double.self, forKey: .schedDepEpoch)
+        schedArrEpoch = try values.decodeIfPresent(Double.self, forKey: .schedArrEpoch)
+        status = try values.decodeIfPresent(String.self, forKey: .status)
+        operatorDelaySec = try values.decodeIfPresent(Int.self, forKey: .operatorDelaySec)
+        latestLocation = try values.decodeIfPresent(LatestLocation.self, forKey: .latestLocation)
+        latestObservedAt = try values.decodeIfPresent(Double.self, forKey: .latestObservedAt)
+        latestSource = try values.decodeIfPresent(String.self, forKey: .latestSource)
+        sources = try values.decodeIfPresent([String: SourceObs].self, forKey: .sources)
+        sourceDelaySpreadSec = try values.decodeIfPresent(Int.self, forKey: .sourceDelaySpreadSec)
+        previousStop = try values.decodeIfPresent(StopRef.self, forKey: .previousStop)
+        nextStop = try values.decodeIfPresent(StopRef.self, forKey: .nextStop)
+        destinationOperatorEta = try values.decodeIfPresent(Double.self, forKey: .destinationOperatorEta)
+        confidence = try values.decodeIfPresent(String.self, forKey: .confidence)
+        ourEstimate = try? values.decodeIfPresent(OurEstimate.self, forKey: .ourEstimate)
+        quality = try values.decodeIfPresent([String].self, forKey: .quality)
+    }
+}
+
 struct OurEstimate: Codable, Hashable {
     var p10: Double
     var p50: Double

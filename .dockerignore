@@ -1,0 +1,10 @@
+node_modules
+data
+tmp
+.git
+.mimosa
+docs
+apps/ios
+*.log
+DerivedData
+.DS_Store

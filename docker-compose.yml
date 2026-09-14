@@ -1,0 +1,69 @@
+# Treno server stack (PLAN_docker_clickhouse.md §2): one image, three roles,
+# ClickHouse as the analytical sink. SQLite + raw snapshots live on the
+# treno-data volume shared by collector and api; ClickHouse owns the
+# analytical mirror (tables created on first start from
+# deploy/clickhouse-init/01_tables.sql).
+#
+#   docker compose up -d --build
+#
+services:
+  collector:
+    build: .
+    image: treno:local
+    command: ["npx", "tsx", "packages/collector/src/index.ts"]
+    volumes:
+      - treno-data:/data
+    environment:
+      TRENO_CLICKHOUSE_URL: http://clickhouse:8123
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  api:
+    image: treno:local
+    command: ["npx", "tsx", "packages/api/src/server.ts"]
+    ports:
+      - "8787:8787"
+    volumes:
+      - treno-data:/data
+    environment:
+      TRENO_CLICKHOUSE_URL: http://clickhouse:8123
+    restart: unless-stopped
+
+  trainer:
+    image: treno:local
+    command: ["node", "bin/train-loop.mjs"]
+    volumes:
+      - treno-data:/data
+    environment:
+      TRENO_CLICKHOUSE_URL: http://clickhouse:8123
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    ulimits:
+      nofile: 262144
+    volumes:
+      - ch-data:/var/lib/clickhouse
+      - ./deploy/clickhouse-init:/docker-entrypoint-initdb.d:ro
+    # host access is for local debugging only — bound to loopback so a public
+    # server never exposes an unauthenticated ClickHouse
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  treno-data:
+  ch-data:

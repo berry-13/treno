@@ -68,6 +68,9 @@ struct RootView: View {
             }
         }
         .tint(.tPrimary)
+        // flat chrome everywhere: no Liquid Glass reflections on the tab bar
+        .toolbarBackground(Color.tBg, for: .tabBar)
+        .toolbarBackground(Color.tBg, for: .navigationBar)
         .onAppear {
             let args = ProcessInfo.processInfo.arguments
             // debug deep links:

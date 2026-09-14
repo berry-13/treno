@@ -62,6 +62,7 @@ struct AddTripView: View {
             }
             .scrollContentBackground(.hidden)
             .navigationTitle("New trip")
+            .toolbarBackground(Color.tBg, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

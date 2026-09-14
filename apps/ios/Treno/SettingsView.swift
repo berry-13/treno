@@ -52,5 +52,6 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
         }
         .navigationTitle("Settings")
+        .toolbarBackground(Color.tBg, for: .navigationBar)
     }
 }

@@ -46,6 +46,7 @@ struct HomeView: View {
             }
         }
         .navigationTitle(greeting)
+        .toolbarBackground(Color.tBg, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {

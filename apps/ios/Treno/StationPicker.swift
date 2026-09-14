@@ -74,6 +74,7 @@ struct StationPickerSheet: View {
                 }
             }
             .navigationTitle("Choose station")
+            .toolbarBackground(Color.tBg, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
         }
         .preferredColorScheme(.dark)

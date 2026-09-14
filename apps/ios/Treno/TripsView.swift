@@ -40,6 +40,7 @@ struct TripsView: View {
             }
         }
         .navigationTitle("Trips")
+        .toolbarBackground(Color.tBg, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {

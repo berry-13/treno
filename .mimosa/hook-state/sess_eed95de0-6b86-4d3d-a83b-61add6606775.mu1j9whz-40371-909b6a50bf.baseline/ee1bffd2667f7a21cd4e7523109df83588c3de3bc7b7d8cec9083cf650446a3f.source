@@ -16,6 +16,7 @@ import { putSnapshot } from '#storage/rawStore.ts';
 import { updateProviderHealth } from '#storage/observations.ts';
 import { refreshSegmentStats, logSegmentSummary } from '#storage/segments.ts';
 import { refreshWeather } from './weather.ts';
+import { refreshGauges } from './weather-arpa.ts';
 import { ingestSnapshot, stateSummaryLine, type FusedState } from './pipeline.ts';
 import { discoverRuns, type DiscoveredRun } from './discover.ts';
 
@@ -172,6 +173,7 @@ export class Collector {
   /** Periodic maintenance: segment-stat refresh (10 min) and optional ATM stop polling (60s). */
   private maintenance(now: number): void {
     void refreshWeather(); // hourly rain feature for the model
+    void refreshGauges(); // ARPA rain-gauge actuals (null until geo join lands)
     if (now - this.lastStatsRefresh > 10 * 60_000) {
       this.lastStatsRefresh = now;
       try {

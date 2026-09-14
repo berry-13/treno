@@ -20,6 +20,7 @@ import { statsForSegment, corridorDelta, segmentId } from '#storage/segments.ts'
 import type { RunRecord } from '#storage/runs.ts';
 import type { FusedState } from './pipeline.ts';
 import { currentPrecipMm, precipSource } from './weather.ts';
+import { gaugePrecipMm } from './weather-arpa.ts';
 import { stopDepartures } from '#gtfs/schedule.ts';
 import { bareTrainNumber } from './discover.ts';
 import { romeWallToEpoch, romeYmd, secondsToHms } from '#core/time.ts';
@@ -57,8 +58,8 @@ export interface HeuristicPrediction {
     operatorEtaDriftSec: number | null;    // operator ETA movement over the last ~5 min
     alertsRun24h: number | null;           // alerts attached to this run (24h)
     alertsRoute24h: number | null;         // alerts at this route's stops (24h)
-    precipMm: number | null;               // mean current-hour rain across the network
-    precipSource: string | null;           // which weather model served it (provenance)
+    precipMm: number | null;               // rain used: ARPA gauge measurement preferred, DWD ICON forecast fallback
+    precipSource: string | null;           // 'arpa-gauge' | 'dwd-icon' | null (provenance)
   };
 }
 
@@ -168,8 +169,8 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
         operatorEtaDriftSec: operatorEtaDrift(db, run.id, state.destinationOperatorEta),
         alertsRun24h: al.onRun,
         alertsRoute24h: al.onRoute,
-        precipMm: currentPrecipMm(),
-        precipSource: precipSource(),
+        precipMm: gaugePrecipMm() ?? currentPrecipMm(),
+        precipSource: gaugePrecipMm() != null ? 'arpa-gauge' : precipSource(),
       };
     })(),
   };

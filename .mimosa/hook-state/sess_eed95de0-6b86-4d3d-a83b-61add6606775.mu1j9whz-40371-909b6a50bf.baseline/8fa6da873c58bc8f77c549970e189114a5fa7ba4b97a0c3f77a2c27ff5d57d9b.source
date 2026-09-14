@@ -27,7 +27,7 @@ interface TrainRow {
   operatorErrorSec: number | null;
 }
 
-function extract(): TrainRow[] {
+export function extract(): TrainRow[] {
   const cfg = loadConfig();
   const db = openTrenoDb(cfg);
   const since = Date.now() - 21 * 86400_000;

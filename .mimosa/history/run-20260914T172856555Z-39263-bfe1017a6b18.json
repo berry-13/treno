@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "mimosa-finding-history/v1",
+  "runId": "20260914T172856555Z-39263-bfe1017a6b18",
+  "runStatus": "inconclusive",
+  "errors": [
+    "supply-chain-check:.: spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT"
+  ],
+  "target": ".",
+  "revision": "5f7eaa1f637a82717fda214a3e1c607f10517a06",
+  "diffHash": "3a779458398449ebf93037453475b1ef521078f3b76860a6ca6519fc7079140f",
+  "rulesVersion": "unavailable",
+  "recordedAt": "2026-09-14T17:28:56.555Z",
+  "timing": {
+    "startedAt": "2026-09-14T17:28:54.059Z",
+    "completedAt": "2026-09-14T17:28:56.555Z",
+    "durationMs": 2496
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "modelCalls": 0,
+    "measurement": "known-zero"
+  },
+  "findings": {
+    "total": 0,
+    "bySeverity": {},
+    "byStatus": {}
+  },
+  "coverage": {
+    "status": "partial",
+    "reasonCounts": {
+      "project_check_failed": 1
+    }
+  },
+  "evidenceBoundary": "static_only",
+  "immutableReport": ".mimosa/reports/task-review-sess_eed95de0-6b86-4d3d-a83b-61add6606775-20260914T172856555Z-39263-bfe1017a6b18.json"
+}

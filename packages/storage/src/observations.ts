@@ -5,6 +5,12 @@
  */
 import { createHash } from 'node:crypto';
 import { runStmt, getRow, getRows, type Db } from '#core/db.ts';
+import { ch } from './clickhouse.ts';
+
+/** epoch-ms → Date for ClickHouse DateTime64(3) columns (null stays null). */
+function d(ms: number | null | undefined): Date | null {
+  return ms != null ? new Date(ms) : null;
+}
 
 export interface ObservationArgs {
   runId: number;
@@ -26,6 +32,13 @@ export function insertObservation(db: Db, a: ObservationArgs): void {
     [a.runId, a.ts, a.source, a.observedAt, a.delaySeconds, a.locationId, a.locationName, a.locationKind, a.status, a.rawHash,
      a.qualityFlags && a.qualityFlags.length > 0 ? JSON.stringify(a.qualityFlags) : null],
   );
+  ch.queue('train_observations', {
+    ts: new Date(a.ts), run_id: a.runId, source: a.source,
+    observed_at: d(a.observedAt), delay_seconds: a.delaySeconds,
+    location_id: a.locationId, location_name: a.locationName,
+    status: a.status,
+    quality_flags: a.qualityFlags && a.qualityFlags.length > 0 ? JSON.stringify(a.qualityFlags) : null,
+  });
 }
 
 export interface StopEventUpsert {
@@ -78,6 +91,16 @@ ON CONFLICT(run_id, stop_id, stop_sequence) DO UPDATE SET
      e.platformIsActual == null ? null : (e.platformIsActual ? 1 : 0),
      e.cancelled == null ? null : (e.cancelled ? 1 : 0), e.source, Date.now()],
   );
+  ch.queue('train_stop_events', {
+    run_id: e.runId, stop_id: e.stopId, stop_sequence: seq,
+    sched_arr_epoch: d(e.schedArrEpoch), sched_dep_epoch: d(e.schedDepEpoch),
+    op_pred_arr_epoch: d(e.opPredArrEpoch), op_pred_dep_epoch: d(e.opPredDepEpoch),
+    actual_arr_epoch: d(actualArr), actual_dep_epoch: d(e.actualDepEpoch),
+    arr_delay_sec: e.arrDelaySec ?? null, dep_delay_sec: e.depDelaySec ?? null,
+    platform_sched: e.platformSched ?? null, platform_actual: platformActual,
+    cancelled: e.cancelled == null ? null : (e.cancelled ? 1 : 0),
+    source: e.source, updated_at: new Date(),
+  });
 }
 
 export function saveState(db: Db, runId: number, stateJson: string): void {
@@ -138,7 +161,14 @@ export function recordPrediction(db: Db, p: {
 }): number {
   const r = db.prepare('INSERT INTO predictions(model_version, run_id, stop_id, generated_at, sched_arr_epoch, operator_eta_epoch, our_p10, our_p50, our_p90, confidence, features_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
     .run(p.modelVersion, p.runId, p.stopId, p.generatedAt, p.schedArrEpoch, p.operatorEtaEpoch, p.ourP10, p.ourP50, p.ourP90, p.confidence, p.featuresJson ?? null);
-  return Number(r.lastInsertRowid);
+  const id = Number(r.lastInsertRowid);
+  ch.queue('predictions', {
+    id, model_version: p.modelVersion, run_id: p.runId, stop_id: p.stopId,
+    generated_at: new Date(p.generatedAt), sched_arr_epoch: d(p.schedArrEpoch),
+    operator_eta_epoch: d(p.operatorEtaEpoch), our_p10: d(p.ourP10), our_p50: d(p.ourP50), our_p90: d(p.ourP90),
+    confidence: p.confidence, features_json: p.featuresJson ?? null,
+  });
+  return id;
 }
 
 /** Persist a provider alert with content-hash dedup (§50). */
@@ -149,10 +179,16 @@ export function insertServiceAlert(db: Db, a: {
 }): void {
   const raw = JSON.stringify(a.raw);
   const hash = createHash('sha256').update(a.source + '|' + String(a.runId) + '|' + raw).digest('hex');
-  runStmt(
-    db.prepare('INSERT OR IGNORE INTO service_alerts(source, run_id, stop_id, title, description, severity, start_epoch, end_epoch, payload_hash, raw_json, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)'),
-    [a.source, a.runId, a.stopId, a.title, a.description, a.severity, a.startEpoch ?? null, a.endEpoch ?? null, hash, raw, Date.now()],
-  );
+  const r = db.prepare('INSERT OR IGNORE INTO service_alerts(source, run_id, stop_id, title, description, severity, start_epoch, end_epoch, payload_hash, raw_json, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    .run(a.source, a.runId, a.stopId, a.title, a.description, a.severity, a.startEpoch ?? null, a.endEpoch ?? null, hash, raw, Date.now());
+  if (Number(r.changes) === 1) {
+    ch.queue('service_alerts', {
+      id: Number(r.lastInsertRowid), source: a.source, run_id: a.runId, stop_id: a.stopId,
+      title: a.title, description: a.description, severity: a.severity,
+      start_epoch: d(a.startEpoch ?? null), end_epoch: d(a.endEpoch ?? null),
+      payload_hash: hash, raw_json: raw, created_at: new Date(),
+    });
+  }
 }
 
 /** When an actual arrival lands, score every recorded prediction for that run+stop. */
@@ -169,5 +205,9 @@ export function fillPredictionOutcomes(db: Db, runId: number, stopId: string, ac
       db.prepare('INSERT OR REPLACE INTO prediction_outcomes(prediction_id, actual_arr_epoch, operator_error_sec, our_error_sec, recorded_at) VALUES(?,?,?,?,?)'),
       [p.id, actualArrEpoch, opErr, ourErr, Date.now()],
     );
+    ch.queue('prediction_outcomes', {
+      prediction_id: p.id, actual_arr_epoch: new Date(actualArrEpoch),
+      operator_error_sec: opErr, our_error_sec: ourErr, recorded_at: new Date(),
+    });
   }
 }

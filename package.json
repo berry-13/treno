@@ -23,9 +23,11 @@
     "backtest": "tsx packages/collector/src/backtest.ts",
     "train:connections": "tsx packages/collector/src/train-connections.ts",
     "retain": "tsx packages/storage/src/retention.ts",
+    "ch:backfill": "tsx packages/storage/src/backfill-ch.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@clickhouse/client": "^1.23.1",
     "@hono/node-server": "^1.13.0",
     "fflate": "^0.8.2",
     "hono": "^4.6.0"

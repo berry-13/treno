@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 import { getRow, runStmt, type Db } from '#core/db.ts';
+import { ch } from './clickhouse.ts';
 
 export interface PutSnapshotArgs {
   source: string;
@@ -73,6 +74,12 @@ export function putSnapshot(db: Db, dataDir: string, args: PutSnapshotArgs): Sna
     payloadHash, args.relevantHash, changed ? 1 : 0, 'zstd', bytes, rel, args.parserVersion, args.error ?? null,
   );
   const id = Number(result.lastInsertRowid);
+  ch.queue('source_snapshots', {
+    fetched_at: new Date(args.fetchedAt), source: args.source, entity_key: args.entityKey,
+    http_status: args.httpStatus, etag: args.etag, last_modified: args.lastModified,
+    payload_hash: payloadHash, relevant_hash: args.relevantHash, changed: changed ? 1 : 0,
+    codec: 'zstd', bytes, path: rel, parser_version: args.parserVersion, error: args.error ?? null,
+  });
   return { id, payloadHash, relevantHash: args.relevantHash, changed, bytes, path: rel };
 }
 

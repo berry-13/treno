@@ -91,6 +91,14 @@ export interface ConformalBucket {
   offsetSec: number;
 }
 
+export interface StopModel {
+  /** boosted trees predicting FINAL arrival delay (sec) from a mid-journey
+   *  state — trained on reconstructed stop-level history */
+  gbm: GBMForest;
+  /** blend: w·residualEstimate + (1−w)·stopModelEstimate, learned on val */
+  weight: number;
+}
+
 export interface ResidualModel {
   version: string;
   trainedAt: number;
@@ -106,6 +114,7 @@ export interface ResidualModel {
   /** 'gbm' when the boosted trees beat the ridge on validation */
   method?: 'ridge' | 'gbm';
   gbm?: GBMForest;
+  stack?: StopModel;
 }
 
 let cached: { file: string; mtime: number; model: ResidualModel | null } | null = null;
@@ -148,7 +157,22 @@ export function applyResidual(model: ResidualModel, x: FeatureInput, p10: number
   const corrSec = model.method === 'gbm' && model.gbm
     ? predictGBM(model.gbm, row)
     : dot(model.ridge, row);
-  const newP50 = p50 + corrSec * 1000;
+  let newP50 = p50 + corrSec * 1000;
+  // stacked stop-state model: what a mid-journey GBM says the final delay
+  // will be, blended with the residual estimate by the learned weight
+  if (model.stack && x.schedArrEpoch != null) {
+    // same construction as training rows: state delay carried through as the
+    // "current estimate" (operator delay at that moment)
+    const stopInput: FeatureInput = {
+      ...x,
+      ourP50: x.operatorEtaEpoch ?? x.ourP50,
+      independentP50: x.operatorEtaEpoch ?? x.independentP50,
+    };
+    const stopRow = featureRow(stopInput);
+    const finalDelay = predictGBM(model.stack.gbm, stopRow);
+    const stopEstimate = x.schedArrEpoch + finalDelay * 1000;
+    newP50 = model.stack.weight * newP50 + (1 - model.stack.weight) * stopEstimate;
+  }
   // conformal bands when available (distribution-free ~80% coverage),
   // pinball offsets as fallback
   let off10: number;
@@ -167,6 +191,6 @@ export function applyResidual(model: ResidualModel, x: FeatureInput, p10: number
     p90: newP50 + Math.max(off90, 30_000),
     p50: newP50,
     modelVersion: RESIDUAL_MODEL_VERSION,
-    correctionSec: Math.round(corrSec),
+    correctionSec: Math.round((newP50 - p50) / 1000),
   };
 }

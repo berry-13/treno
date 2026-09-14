@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20260914T150122746Z-27251-a831bc078062",
+  "runId": "20260914T150122746Z-27251-a831bc078062",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "2c9f5b160d98b15d6e7d6ef13f5ac20a32f478f0",
+  "diffHash": "391adf36e8c8103ed05e8099c6c725551fde3c3bdd0bab4316725acf4e68eca9",
+  "rulesVersion": "unavailable",
+  "sessionHash": "6cbf674cedc9bc83a9ab2875123a1cf8504b50762a2ef0a4d3bf99ef2fa4a7c4",
+  "reportRef": ".mimosa/reports/task-review-sess_eed95de0-6b86-4d3d-a83b-61add6606775-20260914T150122746Z-27251-a831bc078062.json",
+  "events": [],
+  "observedFindingIds": [],
+  "verifiedFiles": [
+    {
+      "file": "packages/collector/src/gbm.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "packages/collector/src/train.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "packages/collector/src/model.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-09-14T15:01:23.158Z"
+}

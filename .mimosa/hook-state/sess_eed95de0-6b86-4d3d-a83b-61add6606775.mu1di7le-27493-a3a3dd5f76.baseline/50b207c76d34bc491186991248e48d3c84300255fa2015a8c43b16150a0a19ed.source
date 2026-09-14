@@ -11,6 +11,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '#core/config.ts';
 import { log } from '#core/log.ts';
+import { predictGBM, type GBMForest } from './gbm.ts';
 
 export const RESIDUAL_MODEL_VERSION = 'heuristic-v1+residual-v1';
 
@@ -102,6 +103,9 @@ export interface ResidualModel {
   pin90: number[];
   /** split-conformal band half-widths per horizon bucket (80% central) */
   conformal?: ConformalBucket[];
+  /** 'gbm' when the boosted trees beat the ridge on validation */
+  method?: 'ridge' | 'gbm';
+  gbm?: GBMForest;
 }
 
 let cached: { file: string; mtime: number; model: ResidualModel | null } | null = null;
@@ -141,7 +145,9 @@ export interface CorrectedPrediction {
 /** Applies the learned correction to a heuristic-v1 prediction. */
 export function applyResidual(model: ResidualModel, x: FeatureInput, p10: number, p50: number, p90: number): CorrectedPrediction {
   const row = featureRow(x);
-  const corrSec = dot(model.ridge, row);
+  const corrSec = model.method === 'gbm' && model.gbm
+    ? predictGBM(model.gbm, row)
+    : dot(model.ridge, row);
   const newP50 = p50 + corrSec * 1000;
   // conformal bands when available (distribution-free ~80% coverage),
   // pinball offsets as fallback

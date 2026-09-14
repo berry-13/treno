@@ -1,0 +1,139 @@
+/**
+ * Residual model on top of heuristic-v1 (§67 lite): a regularized linear
+ * correction of our p50 plus pinball-learned p10/p90 offsets. Shared feature
+ * extraction lives here so training (train.ts) and serving (pipeline) can
+ * never skew apart.
+ *
+ * The model only drives predictions if train.ts validated that it beats the
+ * heuristic on held-out data — the file simply isn't written otherwise.
+ */
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadConfig } from '#core/config.ts';
+import { log } from '#core/log.ts';
+
+export const RESIDUAL_MODEL_VERSION = 'heuristic-v1+residual-v1';
+
+/** Raw inputs available at both train time and serving time. */
+export interface FeatureInput {
+  generatedAt: number;
+  schedArrEpoch: number | null;
+  operatorEtaEpoch: number | null;
+  ourP50: number;
+  ourP10: number;
+  ourP90: number;
+  anchorKind: string | null;
+  remainingSegments: number;
+  statsCoverage: number;
+  corridorAdjustSec: number;
+  operatorWeight: number;
+  independentP50: number | null;
+}
+
+export const FEATURE_NAMES = [
+  'bias',
+  'logHorizon',
+  'operatorDelay',
+  'ourDelay',
+  'independentDelay',
+  'operatorWeight',
+  'statsCoverage',
+  'logSegments',
+  'corridorAdjust',
+  'anchorActual',
+  'anchorNone',
+  'hourSin',
+  'hourCos',
+  'peak',
+] as const;
+
+const cap = (v: number, lim: number): number => Math.max(-lim, Math.min(lim, v));
+
+export function featureRow(x: FeatureInput): number[] {
+  const horizonSec = x.schedArrEpoch != null ? Math.max(0, (x.schedArrEpoch - x.generatedAt) / 1000) : 1800;
+  const opDelay = x.operatorEtaEpoch != null && x.schedArrEpoch != null ? cap((x.operatorEtaEpoch - x.schedArrEpoch) / 1000, 1800) : 0;
+  const ourDelay = x.schedArrEpoch != null ? cap((x.ourP50 - x.schedArrEpoch) / 1000, 1800) : 0;
+  const indepDelay = x.independentP50 != null && x.schedArrEpoch != null ? cap((x.independentP50 - x.schedArrEpoch) / 1000, 1800) : 0;
+  const hourRome = new Date(x.generatedAt).toLocaleString('en-GB', { timeZone: 'Europe/Rome', hour: 'numeric', hour12: false });
+  const hour = Number(hourRome) || 12;
+  const peak = (hour >= 7 && hour < 9) || (hour >= 16 && hour < 19) ? 1 : 0;
+  return [
+    1,
+    Math.log1p(horizonSec) / 8,
+    opDelay / 600,
+    ourDelay / 600,
+    indepDelay / 600,
+    x.operatorWeight,
+    x.statsCoverage,
+    Math.log1p(x.remainingSegments) / 3,
+    cap(x.corridorAdjustSec, 600) / 300,
+    x.anchorKind === 'actual_dep' || x.anchorKind === 'actual_arr' ? 1 : 0,
+    x.anchorKind == null ? 1 : 0,
+    Math.sin((2 * Math.PI * hour) / 24),
+    Math.cos((2 * Math.PI * hour) / 24),
+    peak,
+  ];
+}
+
+export interface ResidualModel {
+  version: string;
+  trainedAt: number;
+  trainRows: number;
+  valRows: number;
+  valMae: { heuristic: number; model: number; operator: number };
+  valCoverage10to90: { heuristic: number; model: number };
+  ridge: number[];
+  pin10: number[];
+  pin90: number[];
+}
+
+let cached: { file: string; mtime: number; model: ResidualModel | null } | null = null;
+
+/** Lazily loads data/models/residual-v1.json, refreshing on mtime change so a
+ *  retrain is picked up by the running collector within minutes. */
+export function getResidualModel(): ResidualModel | null {
+  const file = join(loadConfig().dataDir, 'models', 'residual-v1.json');
+  try {
+    const mtime = statSync(file).mtimeMs;
+    if (cached && cached.file === file && cached.mtime === mtime) return cached.model;
+    const model = JSON.parse(readFileSync(file, 'utf8')) as ResidualModel;
+    cached = { file, mtime, model };
+    log.info('residual model loaded', { version: model.version, valMae: model.valMae });
+    return model;
+  } catch {
+    if (!existsSync(join(loadConfig().dataDir, 'models'))) return null;
+    cached = { file, mtime: 0, model: null };
+    return null;
+  }
+}
+
+const dot = (a: number[], b: number[]): number => {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i]! * b[i]!;
+  return s;
+};
+
+export interface CorrectedPrediction {
+  p10: number;
+  p50: number;
+  p90: number;
+  modelVersion: string;
+  correctionSec: number;
+}
+
+/** Applies the learned correction to a heuristic-v1 prediction. */
+export function applyResidual(model: ResidualModel, x: FeatureInput, p10: number, p50: number, p90: number): CorrectedPrediction {
+  const row = featureRow(x);
+  const corrSec = dot(model.ridge, row);
+  const newP50 = p50 + corrSec * 1000;
+  // quantile offsets replace the hand-tuned spread
+  const off10 = dot(model.pin10, row) * 1000;
+  const off90 = dot(model.pin90, row) * 1000;
+  return {
+    p10: Math.min(newP50 + Math.min(off10, -30_000), p10),
+    p90: Math.max(newP50 + Math.max(off90, 30_000), p90),
+    p50: newP50,
+    modelVersion: RESIDUAL_MODEL_VERSION,
+    correctionSec: Math.round(corrSec),
+  };
+}

@@ -32,6 +32,9 @@ export interface FeatureInput {
   originDepDelaySec: number | null;
   trainHistoryDelaySec: number | null;
   networkDelaySec: number | null;
+  operatorEtaDriftSec: number | null;
+  alertsRun24h: number | null;
+  alertsRoute24h: number | null;
 }
 
 export const FEATURE_NAMES = [
@@ -52,6 +55,9 @@ export const FEATURE_NAMES = [
   'originDepDelay',
   'trainHistoryDelay',
   'networkDelay',
+  'etaDrift',
+  'alertsRun',
+  'alertsRoute',
 ] as const;
 
 const cap = (v: number, lim: number): number => Math.max(-lim, Math.min(lim, v));
@@ -82,6 +88,9 @@ export function featureRow(x: FeatureInput): number[] {
     cap(x.originDepDelaySec ?? 0, 1800) / 600,
     cap(x.trainHistoryDelaySec ?? 0, 1800) / 600,
     cap(x.networkDelaySec ?? 0, 900) / 300,
+    cap(x.operatorEtaDriftSec ?? 0, 600) / 300,
+    Math.min(x.alertsRun24h ?? 0, 10) / 5,
+    Math.min(x.alertsRoute24h ?? 0, 10) / 5,
   ];
 }
 

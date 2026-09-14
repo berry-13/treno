@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { loadConfig } from '#core/config.ts';
 import { log } from '#core/log.ts';
 import { openTrenoDb } from '#gtfs/setup.ts';
-import { FEATURE_NAMES, featureRow, type FeatureInput, type ResidualModel, type ConformalBucket } from './model.ts';
+import { FEATURE_NAMES, featureRow, type FeatureInput, type ResidualModel, type ConformalBucket, type StopModel } from './model.ts';
 import { fitGBM, predictGBM, type GBMForest } from './gbm.ts';
 import { RESIDUAL_MODEL_VERSION } from './model.ts';
 
@@ -77,7 +77,59 @@ function extract(): TrainRow[] {
   return out;
 }
 
-// MARK: ridge via normal equations + Gaussian elimination
+/** Reconstruct mid-journey training states from completed runs' stop events:
+ *  "at stop k, actual arrival t_k, delay d_k — what was the FINAL delay?"
+ *  This multiplies training data ~10x using history we already have. */
+function buildStopLevel(): { X: number[][]; y: number[] } {
+  const db = openTrenoDb(loadConfig());
+  const since = Date.now() - 21 * 86400_000;
+  const rows = db.prepare(
+    `SELECT s.run_id, s.stop_sequence, s.arr_delay_sec, s.sched_arr_epoch k_sched, s.actual_arr_epoch t_k,
+       (SELECT MAX(e2.stop_sequence) FROM train_stop_events e2 WHERE e2.run_id=s.run_id) max_seq,
+       (SELECT e3.actual_arr_epoch FROM train_stop_events e3 WHERE e3.run_id=s.run_id AND e3.stop_id=r.destination_stop_id) dest_actual,
+       (SELECT (e4.actual_dep_epoch - e4.sched_dep_epoch) FROM train_stop_events e4 WHERE e4.run_id=s.run_id AND e4.stop_id=r.origin_stop_id AND e4.actual_dep_epoch IS NOT NULL) origin_dep_ms,
+       r.sched_arr_epoch, r.train_number, r.service_date
+     FROM train_stop_events s JOIN train_runs r ON r.id=s.run_id
+     WHERE s.actual_arr_epoch IS NOT NULL AND s.arr_delay_sec IS NOT NULL AND s.sched_arr_epoch IS NOT NULL
+       AND r.sched_arr_epoch IS NOT NULL AND r.origin_stop_id IS NOT NULL AND r.destination_stop_id IS NOT NULL
+       AND s.stop_id != r.destination_stop_id`,
+  ).all() as Array<{
+    run_id: number; stop_sequence: number; arr_delay_sec: number; k_sched: number; t_k: number;
+    max_seq: number | null; dest_actual: number | null; origin_dep_ms: number | null;
+    sched_arr_epoch: number; train_number: string; service_date: string;
+  }>;
+  db.close();
+  const X: number[][] = [];
+  const y: number[] = [];
+  const sinceYmd = new Date(since).toISOString().slice(0, 10);
+  for (const r of rows) {
+    if (r.dest_actual == null || r.max_seq == null || r.t_k >= r.dest_actual) continue;
+    if (r.service_date < sinceYmd) continue;
+    const label = Math.max(-2700, Math.min(2700, (r.dest_actual - r.sched_arr_epoch) / 1000));
+    const delayK = Math.max(-1800, Math.min(1800, r.arr_delay_sec));
+    const fi: FeatureInput = {
+      generatedAt: r.t_k,
+      schedArrEpoch: r.sched_arr_epoch,
+      operatorEtaEpoch: r.sched_arr_epoch + delayK * 1000,
+      ourP50: r.sched_arr_epoch + delayK * 1000,
+      ourP10: 0,
+      ourP90: 0,
+      anchorKind: 'actual_arr',
+      remainingSegments: Math.max(1, r.max_seq - r.stop_sequence),
+      statsCoverage: 0.5,
+      corridorAdjustSec: 0,
+      operatorWeight: 0.65,
+      independentP50: r.sched_arr_epoch + delayK * 1000,
+      originDepDelaySec: r.origin_dep_ms != null ? Math.round(r.origin_dep_ms / 1000) : null,
+      trainHistoryDelaySec: null,
+      networkDelaySec: null,
+    };
+    X.push(featureRow(fi));
+    y.push(label);
+    if (X.length >= 150_000) break;
+  }
+  return { X, y };
+}
 
 function ridgeFit(X: number[][], y: number[], lambda: number): number[] {
   const d = X[0]!.length;
@@ -179,6 +231,50 @@ function main() {
     Math.max(-1200, Math.min(1200, useGbm ? predictGBM(gbm, Xva[i]!) : dot(ridge, Xva[i]!)));
   log.info('train: method selection', { maeRidge: Math.round(maeRidge / val.length), maeGbm: Math.round(maeGbm / val.length), useGbm });
 
+  // stacked stop-state model: train on reconstructed mid-journey states,
+  // then learn the blend weight against the residual model on validation
+  const stopData = buildStopLevel();
+  let stack: StopModel | undefined;
+  if (stopData.X.length >= 5000) {
+    const t1 = Date.now();
+    const stopGbm = fitGBM(stopData.X, stopData.y, 120, 0.08, 3, 40);
+    log.info('train: stop-level gbm fitted', { ms: Date.now() - t1, rows: stopData.X.length });
+    let bestW = -1, bestMae = Infinity;
+    for (let w10 = 0; w10 <= 10; w10 += 1) {
+      const w = w10 / 10;
+      let mae = 0;
+      for (let i = 0; i < val.length; i++) {
+        const f = val[i]!.features;
+        if (f.schedArrEpoch == null) { mae += Math.abs(yva[i]!); continue; }
+        const stopInput: FeatureInput = { ...f, ourP50: f.operatorEtaEpoch ?? f.ourP50, independentP50: f.operatorEtaEpoch ?? f.independentP50 };
+        const stopDelay = predictGBM(stopGbm, featureRow(stopInput));
+        const residualEst = f.ourP50 + corrOf(i) * 1000;
+        const stopEst = f.schedArrEpoch + stopDelay * 1000;
+        const blend = w * residualEst + (1 - w) * stopEst;
+        mae += Math.abs(f.schedArrEpoch + yva[i]! * 1000 - blend);
+      }
+      if (mae < bestMae) { bestMae = mae; bestW = w; }
+    }
+    const stackMae = bestMae / val.length;
+    log.info('train: stack weight search', { bestW, stackMae: Math.round(stackMae), residualOnlyMae: Math.round(maeGbm / val.length) });
+    // keep the stack only if it actually improves validation MAE
+    if (bestW >= 0 && stackMae < maeGbm / val.length) {
+      stack = { gbm: stopGbm, weight: bestW };
+    }
+  }
+
+  /** final correction in seconds, including the stack blend when active */
+  const predSec = (i: number): number => {
+    const f = val[i]!.features;
+    let est = f.ourP50 + corrOf(i) * 1000;
+    if (stack && f.schedArrEpoch != null) {
+      const stopInput: FeatureInput = { ...f, ourP50: f.operatorEtaEpoch ?? f.ourP50, independentP50: f.operatorEtaEpoch ?? f.independentP50 };
+      const stopDelay = predictGBM(stack.gbm, featureRow(stopInput));
+      est = stack.weight * est + (1 - stack.weight) * (f.schedArrEpoch + stopDelay * 1000);
+    }
+    return (est - f.ourP50) / 1000;
+  };
+
   let maeHeur = 0, maeModel = 0, maeOp = 0, opN = 0, covHeur = 0, covModel = 0;
   // split-conformal: per-horizon-bucket absolute-residual quantiles give a
   // distribution-free ~80% central band (0.9 quantile of |residual| → ±band)
@@ -187,7 +283,7 @@ function main() {
   for (let i = 0; i < val.length; i++) {
     const y = yva[i]!;
     maeHeur += Math.abs(y);
-    const corr = corrOf(i);
+    const corr = predSec(i);
     maeModel += Math.abs(y - corr);
     if (val[i]!.operatorErrorSec != null) {
       maeOp += Math.abs(val[i]!.operatorErrorSec!);
@@ -211,7 +307,7 @@ function main() {
   for (let i = 0; i < val.length; i++) {
     const f = val[i]!.features;
     const y = yva[i]!;
-    const corr = corrOf(i);
+    const corr = predSec(i);
     const horizonSec = f.schedArrEpoch != null ? Math.max(0, (f.schedArrEpoch - f.generatedAt) / 1000) : 1800;
     const bucket = conformal.find((b) => horizonSec <= b.maxHorizonSec) ?? conformal[conformal.length - 1]!;
     if (Math.abs(y - corr) <= bucket.offsetSec) covModel++;
@@ -242,7 +338,7 @@ function main() {
       heuristic: Math.round((covHeur / val.length) * 100) / 100,
       model: Math.round((covModel / val.length) * 100) / 100,
     },
-    ridge, pin10, pin90, conformal,
+    ridge, pin10, pin90, conformal, stack,
     method: useGbm ? 'gbm' : 'ridge',
     gbm: useGbm ? gbm : undefined,
   };

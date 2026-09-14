@@ -370,6 +370,9 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
       originDepDelaySec: prediction.features.originDepDelaySec,
       trainHistoryDelaySec: prediction.features.trainHistoryDelaySec,
       networkDelaySec: prediction.features.networkDelaySec,
+      operatorEtaDriftSec: prediction.features.operatorEtaDriftSec,
+      alertsRun24h: prediction.features.alertsRun24h,
+      alertsRoute24h: prediction.features.alertsRoute24h,
     };
     const corrected = applyResidual(residual, fi, prediction.p10, prediction.p50, prediction.p90);
     prediction = {

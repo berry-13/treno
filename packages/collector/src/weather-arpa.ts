@@ -1,0 +1,57 @@
+/**
+ * ARPA Lombardia rain-gauge actuals (§roadmap #4): measured precipitation
+ * from the regional sensor network, preferred over forecast models when
+ * available. Socrata API on dati.lombardia.it, no token for reads.
+ * If discovery/reads fail, features stay null and we log once — no fakes.
+ *
+ * STATUS 2026-09-14: readings dataset verified live (i95f-5avh, 10-min
+ * cadence, fresh today). Remaining: sensor→station geo join via the
+ * '4wxn-35av' station registry to pick sensors near rail corridors —
+ * then wire gaugePrecipMm() into heuristic features (precipGaugeMm).
+ */
+import { log } from '#core/log.ts';
+
+const STATIONS = ['4f9d-2dcz']; // sensori meteo registry (verified live)
+const READINGS = ['i95f-5avh']; // Dati sensori meteo (verified live)
+const NEAR: Array<{ lat: number; lon: number }> = [
+  { lat: 45.46, lon: 9.19 }, { lat: 45.58, lon: 9.27 }, { lat: 45.54, lon: 10.21 }, { lat: 45.82, lon: 8.82 },
+];
+
+let cached: { at: number; mm: number | null } = { at: 0, mm: null };
+let warned = false;
+
+export function gaugePrecipMm(): number | null {
+  return Date.now() - cached.at < 3600_000 ? cached.mm : null;
+}
+
+async function get(url: string): Promise<unknown | null> {
+  try {
+    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function refreshGauges(): Promise<void> {
+  // resolve precipitation sensors near our corridors from station metadata
+  const where = NEAR.map((p) => `within_circle(location,${p.lat},${p.lon},15000)`).join(' OR ');
+  const st = (await get(`https://www.dati.lombardia.it/resource/${STATIONS[0]}.json?$where=${encodeURIComponent(where)}&$limit=200`)) as Array<{ idsensore?: string; tipologia?: string; location?: { coordinates?: number[] } }> | null;
+  const sensors = (st ?? []).filter((s) => (s.tipologia ?? '').toLowerCase().includes('precip')).map((s) => s.idsensore).filter(Boolean).slice(0, 12) as string[];
+  if (sensors.length === 0) {
+    if (!warned) { log.warn('arpa: no precipitation sensors found (dataset ids may have moved)'); warned = true; }
+    cached = { at: Date.now(), mm: null };
+    return;
+  }
+  const vals: number[] = [];
+  for (const id of sensors) {
+    for (const ds of READINGS) {
+      const rows = (await get(`https://www.dati.lombardia.it/resource/${ds}.json?idsensore=${id}&$order=data%20DESC&$limit=2`)) as Array<{ valore?: string }> | null;
+      const v = rows?.[0]?.valore;
+      if (v != null && Number.isFinite(Number(v))) { vals.push(Number(v)); break; }
+    }
+  }
+  cached = { at: Date.now(), mm: vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 : null };
+  log.info('arpa gauges refreshed', { mm: cached.mm, sensors: vals.length });
+}

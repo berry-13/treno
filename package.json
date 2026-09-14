@@ -20,6 +20,8 @@
     "api": "tsx packages/api/src/server.ts",
     "bench": "tsx packages/collector/src/bench.ts",
     "train": "tsx packages/collector/src/train.ts",
+    "backtest": "tsx packages/collector/src/backtest.ts",
+    "train:connections": "tsx packages/collector/src/train-connections.ts",
     "retain": "tsx packages/storage/src/retention.ts",
     "typecheck": "tsc -p tsconfig.json"
   },

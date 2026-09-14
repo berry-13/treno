@@ -11,6 +11,11 @@
  * Never presented as operator data: outputs carry modelVersion + provenance.
  */
 import { getRow, getRows, type Db } from '#core/db.ts';
+import { readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadConfig } from '#core/config.ts';
+import { predictGBM } from './gbm.ts';
+import { connectionRow } from './train-connections.ts';
 import { statsForSegment, corridorDelta, segmentId } from '#storage/segments.ts';
 import type { RunRecord } from '#storage/runs.ts';
 import type { FusedState } from './pipeline.ts';
@@ -235,6 +240,25 @@ export function recoveryPrediction(state: FusedState, p50: number): number | nul
   return Math.round(current - expectedAtDest);
 }
 
+// MARK: - learned connection model (AUC-gated, hot-reloaded)
+
+let connModelCache: { mtime: number; model: { gbm: { base: number; lr: number; trees: unknown[] } } | null } | null = null;
+
+function learnedConnectionProbability(bufferSec: number, aDelaySec: number, bDelaySec: number | null, depEpochMs: number): number | null {
+  try {
+    const file = join(loadConfig().dataDir, 'models', 'connections-v1.json');
+    const mtime = statSync(file).mtimeMs;
+    if (!connModelCache || connModelCache.mtime !== mtime) {
+      connModelCache = { mtime, model: JSON.parse(readFileSync(file, 'utf8')) };
+    }
+    const hour = Number(new Date(depEpochMs).toLocaleString('en-GB', { timeZone: 'Europe/Rome', hour: 'numeric', hour12: false })) || 12;
+    const row = connectionRow(bufferSec, aDelaySec, bDelaySec, hour);
+    return Math.max(0.001, Math.min(0.999, predictGBM(connModelCache.model!.gbm as never, row)));
+  } catch {
+    return null;
+  }
+}
+
 // MARK: - connection probability (§18)
 
 function erf(x: number): number {
@@ -272,7 +296,7 @@ export function connectionOptions(
   ourP10: number,
   ourP90: number,
   currentTrainNumber: string | null,
-  opts: { transferSec?: number; limit?: number; horizonMin?: number } = {},
+  opts: { transferSec?: number; limit?: number; horizonMin?: number; arrDelaySec?: number } = {},
 ): ConnectionOption[] {
   const transferSec = opts.transferSec ?? 240;
   const limit = opts.limit ?? 3;
@@ -299,8 +323,22 @@ export function connectionOptions(
     );
     const opDelay = live[0]?.delay_seconds ?? null;
     const effDep = depEpoch + (opDelay ?? 0) * 1000;
-    const z = (effDep - transferSec * 1000 - ourP50) / sigmaMs;
-    const probability = Math.max(0.001, Math.min(0.999, normalCdf(z)));
+    // learned connection model when available (AUC-gated), normal-CDF fallback
+    const arrDelaySec = opts.arrDelaySec ?? 0;
+    const schedArrMs = ourP50 - arrDelaySec * 1000;
+    const learned = learnedConnectionProbability(
+      (depEpoch - schedArrMs) / 1000, // planned buffer
+      arrDelaySec,
+      opDelay,
+      effDep,
+    );
+    let probability: number;
+    if (learned != null) {
+      probability = learned;
+    } else {
+      const z = (effDep - transferSec * 1000 - ourP50) / sigmaMs;
+      probability = Math.max(0.001, Math.min(0.999, normalCdf(z)));
+    }
     const destName = d.destination_stop_id != null
       ? (getName(db, d.destination_stop_id) ?? d.destination_stop_id)
       : null;

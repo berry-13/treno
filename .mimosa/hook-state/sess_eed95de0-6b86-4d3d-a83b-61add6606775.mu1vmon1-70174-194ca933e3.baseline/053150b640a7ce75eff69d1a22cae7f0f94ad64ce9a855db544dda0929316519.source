@@ -11,6 +11,7 @@
         "packages/*"
       ],
       "dependencies": {
+        "@clickhouse/client": "^1.23.1",
         "@hono/node-server": "^1.13.0",
         "fflate": "^0.8.2",
         "hono": "^4.6.0"
@@ -19,6 +20,15 @@
         "@types/node": "^26.0.0",
         "tsx": "^4.19.0",
         "typescript": "^5.6.0"
+      }
+    },
+    "node_modules/@clickhouse/client": {
+      "version": "1.23.1",
+      "resolved": "https://registry.npmjs.org/@clickhouse/client/-/client-1.23.1.tgz",
+      "integrity": "sha512-vs3/Zc1dHvT171btW5nMoPsPCJ6QVJ5pp7obxzO5sjqwFx/jjz9wwCAqcFOdc2DhprugDBaVn+4dVY8hG3A9nw==",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=20"
       }
     },
     "node_modules/@esbuild/aix-ppc64": {
@@ -475,6 +485,10 @@
         "hono": "^4"
       }
     },
+    "node_modules/@treno/api": {
+      "resolved": "packages/api",
+      "link": true
+    },
     "node_modules/@treno/collector": {
       "resolved": "packages/collector",
       "link": true
@@ -616,6 +630,9 @@
       "integrity": "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==",
       "dev": true,
       "license": "MIT"
+    },
+    "packages/api": {
+      "name": "@treno/api"
     },
     "packages/collector": {
       "name": "@treno/collector"

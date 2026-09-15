@@ -7,6 +7,7 @@
 import { getRow, runStmt, type Db } from '#core/db.ts';
 import { runKeyStr, type RunKey } from '#core/ids.ts';
 import { romeWallToEpoch, ymdPlusDays } from '#core/time.ts';
+import { ch } from './clickhouse.ts';
 
 export interface RunRecord {
   id: number;
@@ -39,20 +40,19 @@ export interface EnsureRunArgs extends RunKey {
 export function ensureRun(db: Db, args: EnsureRunArgs): number {
   const key = runKeyStr(args);
   const now = Date.now();
-  runStmt(
-    db.prepare('INSERT OR IGNORE INTO train_runs(run_key, operator, service_date, train_number, origin_stop_id, destination_stop_id, sched_dep_sec, sched_arr_sec, sched_dep_epoch, sched_arr_epoch, gtfs_trip_id, route_id, first_seen_source, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)'),
-    [key, args.operator, args.serviceDate, args.trainNumber, args.originStopId, args.destinationStopId ?? null,
-     args.schedDepSec ?? null, args.schedArrSec ?? null,
-     args.schedDepSec != null ? romeWallToEpoch(args.serviceDate, args.schedDepSec) : null,
-     args.schedArrSec != null ? romeWallToEpoch(args.serviceDate, args.schedArrSec) : null,
-     args.gtfsTripId ?? null, args.routeId ?? null, args.source, now],
-  );
-  let run = getRow<{ id: number }>(db, 'SELECT id FROM train_runs WHERE run_key=?', [key]);
+  const ins = db.prepare('INSERT OR IGNORE INTO train_runs(run_key, operator, service_date, train_number, origin_stop_id, destination_stop_id, sched_dep_sec, sched_arr_sec, sched_dep_epoch, sched_arr_epoch, gtfs_trip_id, route_id, first_seen_source, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(key, args.operator, args.serviceDate, args.trainNumber, args.originStopId, args.destinationStopId ?? null,
+      args.schedDepSec ?? null, args.schedArrSec ?? null,
+      args.schedDepSec != null ? romeWallToEpoch(args.serviceDate, args.schedDepSec) : null,
+      args.schedArrSec != null ? romeWallToEpoch(args.serviceDate, args.schedArrSec) : null,
+      args.gtfsTripId ?? null, args.routeId ?? null, args.source, now);
+  const isNew = Number(ins.changes) === 1;
+  let run = getRow<{ id: number; destination_stop_id: string | null; gtfs_trip_id: string | null; route_id: string | null }>(db, 'SELECT id, destination_stop_id, gtfs_trip_id, route_id FROM train_runs WHERE run_key=?', [key]);
   if (!run) {
     // INSERT OR IGNORE kept an earlier row with same (date, number, origin) but unknown dep ('?')
-    run = getRow<{ id: number }>(
+    run = getRow<{ id: number; destination_stop_id: string | null; gtfs_trip_id: string | null; route_id: string | null }>(
       db,
-      'SELECT id FROM train_runs WHERE operator=? AND service_date=? AND train_number=? AND (origin_stop_id=? OR origin_stop_id IS NULL) AND (sched_dep_sec=? OR sched_dep_sec IS NULL) ORDER BY sched_dep_sec IS NULL LIMIT 1',
+      'SELECT id, destination_stop_id, gtfs_trip_id, route_id FROM train_runs WHERE operator=? AND service_date=? AND train_number=? AND (origin_stop_id=? OR origin_stop_id IS NULL) AND (sched_dep_sec=? OR sched_dep_sec IS NULL) ORDER BY sched_dep_sec IS NULL LIMIT 1',
       [args.operator, args.serviceDate, args.trainNumber, args.originStopId, args.schedDepSec ?? null],
     );
   }
@@ -62,6 +62,25 @@ export function ensureRun(db: Db, args: EnsureRunArgs): number {
     db.prepare('UPDATE train_runs SET destination_stop_id=COALESCE(destination_stop_id,?), sched_arr_sec=COALESCE(sched_arr_sec,?), gtfs_trip_id=COALESCE(gtfs_trip_id,?), route_id=COALESCE(route_id,?), last_activity_at=? WHERE id=?'),
     [args.destinationStopId ?? null, args.schedArrSec ?? null, args.gtfsTripId ?? null, args.routeId ?? null, now, run.id],
   );
+  // mirror to ClickHouse on first sight or when a previously-null field was learned
+  const enriched = !isNew && (
+    (args.destinationStopId != null && run.destination_stop_id == null) ||
+    (args.gtfsTripId != null && run.gtfs_trip_id == null) ||
+    (args.routeId != null && run.route_id == null));
+  if (isNew || enriched) {
+    const full = getRow<RunRecord>(db, 'SELECT * FROM train_runs WHERE id=?', [run.id]);
+    if (full) {
+      ch.queue('train_runs', {
+        run_id: full.id, run_key: full.run_key, train_number: full.train_number,
+        service_date: full.service_date, operator: full.operator,
+        origin_stop_id: full.origin_stop_id, destination_stop_id: full.destination_stop_id,
+        sched_dep_epoch: full.sched_dep_epoch != null ? new Date(full.sched_dep_epoch) : null,
+        sched_arr_epoch: full.sched_arr_epoch != null ? new Date(full.sched_arr_epoch) : null,
+        gtfs_trip_id: full.gtfs_trip_id, route_id: full.route_id,
+        first_seen_source: full.first_seen_source, created_at: new Date(full.created_at),
+      });
+    }
+  }
   return run.id;
 }
 

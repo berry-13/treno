@@ -25,6 +25,7 @@ targets:
         UILaunchScreen: {}
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: "Connects to your own treno server on the local network for live train data."
         NSLocationWhenInUseUsageDescription: "Used to find the station nearest you when creating trips or browsing the map."
         NSSupportsLiveActivities: true
         UISupportedInterfaceOrientations:
@@ -36,10 +37,10 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
-        DEVELOPMENT_TEAM: ""
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGNING_REQUIRED: NO
+        DEVELOPMENT_TEAM: "2PSCFPTSRR"
+        CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: Treno/Treno.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.berry13.treno
   TrenoWidget:
     type: app-extension
     platform: iOS
@@ -49,16 +50,19 @@ targets:
       path: Widget/Info.plist
       properties:
         CFBundleDisplayName: Treno
+        # extensions carry their own ATS policy — without this the widget's
+        # /api/journeys call to a LAN address silently fails
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.treno.Treno.Widget
+        PRODUCT_BUNDLE_IDENTIFIER: com.berry13.treno.widget
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Widget/TrenoWidget.entitlements
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
-        DEVELOPMENT_TEAM: ""
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGN_ENTITLEMENTS: Widget/TrenoWidget.entitlements
+        DEVELOPMENT_TEAM: "2PSCFPTSRR"

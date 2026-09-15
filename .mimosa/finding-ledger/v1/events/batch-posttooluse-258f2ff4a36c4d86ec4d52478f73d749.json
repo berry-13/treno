@@ -1,0 +1,600 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "posttooluse-258f2ff4a36c4d86ec4d52478f73d749",
+  "runId": null,
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "PostToolUse"
+  },
+  "revision": null,
+  "diffHash": null,
+  "rulesVersion": null,
+  "sessionHash": "8f40fb85fd9a22f1cc3b0510e9310ebaeb4a153ff7614b7de4c09f44ada6dd6d",
+  "reportRef": null,
+  "events": [
+    {
+      "eventId": "hook-ead5c7d003f166dc57a7ea73501c6914",
+      "findingId": "mimosa-3cc04ef3622bd14e4b9cedc0",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "dc2a783371d8748e11f8dbc517c260b4541a6fdafa1ad275193f8ff30ed1dada",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 136,
+      "endLine": 136,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "dc2a783371d8748e11f8dbc517c260b4541a6fdafa1ad275193f8ff30ed1dada"
+      },
+      "sequence": 0
+    },
+    {
+      "eventId": "hook-de8e206f89e7e7fc42721abf33240eb4",
+      "findingId": "mimosa-159888e07f17cbcbaccdc42e",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "c45e734f5f344b05be640c059aa6a82a162cfabc60642aa2c508dbd3a8bd2897",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 152,
+      "endLine": 152,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "c45e734f5f344b05be640c059aa6a82a162cfabc60642aa2c508dbd3a8bd2897"
+      },
+      "sequence": 1
+    },
+    {
+      "eventId": "hook-d495ba2e9433cccbf2249587bedece83",
+      "findingId": "mimosa-34d7e68f3cea8bfbca4d88cc",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "7c48f0438c446e982ba020d62f7ee71439fc2cdacd530d84abccbefa129c3364",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 163,
+      "endLine": 163,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "7c48f0438c446e982ba020d62f7ee71439fc2cdacd530d84abccbefa129c3364"
+      },
+      "sequence": 2
+    },
+    {
+      "eventId": "hook-6019a7e86f5729426d19a5fb475bf863",
+      "findingId": "mimosa-8dac4fab74c064a34526082a",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "33269660bbfc284df3b97d9fa319306a48e95855d6659f7b9e1248ba98114053",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 164,
+      "endLine": 164,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "33269660bbfc284df3b97d9fa319306a48e95855d6659f7b9e1248ba98114053"
+      },
+      "sequence": 3
+    },
+    {
+      "eventId": "hook-0c5191d8734323dc375494b36a261207",
+      "findingId": "mimosa-1267afd150b88b76033c8dfb",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "6c428d7341939d4c498c5aa1b5f1a4929bc1aab2fb26c18a09b642f7160f1d9b",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 165,
+      "endLine": 165,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "6c428d7341939d4c498c5aa1b5f1a4929bc1aab2fb26c18a09b642f7160f1d9b"
+      },
+      "sequence": 4
+    },
+    {
+      "eventId": "hook-14f5878e12cf33fb9d114123b00b5430",
+      "findingId": "mimosa-e82d5ffe3906fb0dcfe3d434",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "52f38d54b852e1878628f364b26d673e8c5c84743b605597d24e9b258f273aa0",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 166,
+      "endLine": 166,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "52f38d54b852e1878628f364b26d673e8c5c84743b605597d24e9b258f273aa0"
+      },
+      "sequence": 5
+    },
+    {
+      "eventId": "hook-ce7cffe1476515a5b76687bd29cdefec",
+      "findingId": "mimosa-1ec45c9de6dc9d270ee2e72e",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "a83143b2e83e8500f70f6edacd3ccedff0c9f79b8dd772e2a7f99f4d54ca6f2b",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 167,
+      "endLine": 167,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "a83143b2e83e8500f70f6edacd3ccedff0c9f79b8dd772e2a7f99f4d54ca6f2b"
+      },
+      "sequence": 6
+    },
+    {
+      "eventId": "hook-1b504154b2a06f633db9d1135097c69c",
+      "findingId": "mimosa-79a482f0ac9b7efeaf736cfa",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "f10d3c304b1a9e0bb77ebe6d384c6a1f84c8d2297d92051d1a543b155b572646",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 168,
+      "endLine": 168,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "f10d3c304b1a9e0bb77ebe6d384c6a1f84c8d2297d92051d1a543b155b572646"
+      },
+      "sequence": 7
+    },
+    {
+      "eventId": "hook-fb98285af8c17e29a96091ae7c2c80a5",
+      "findingId": "mimosa-a34345cf1693d28660f82260",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "f4955cb719c2c9b976d96c99cba6beaa00d89a9eb87188c48ccd330b7e1ec412",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 169,
+      "endLine": 169,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "f4955cb719c2c9b976d96c99cba6beaa00d89a9eb87188c48ccd330b7e1ec412"
+      },
+      "sequence": 8
+    },
+    {
+      "eventId": "hook-c4bbbc1884bcfa97783c0d2771575577",
+      "findingId": "mimosa-3c22c5f0e027ed8ff584fc4b",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "0417aa32837c843e64f624b2e07d6caaea156790ba7dbf81589620aa93acff5c",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 138,
+      "endLine": 138,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "0417aa32837c843e64f624b2e07d6caaea156790ba7dbf81589620aa93acff5c"
+      },
+      "sequence": 9
+    },
+    {
+      "eventId": "hook-29e32e9cc4453f8f9f9d1c9930636960",
+      "findingId": "mimosa-6fa8a19fc2442291c36c840f",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "98e994fcb34d3a86d0aa37a62b4af7e1b884371b6b3be2776a7127c930be7bfb",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 116,
+      "endLine": 116,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "98e994fcb34d3a86d0aa37a62b4af7e1b884371b6b3be2776a7127c930be7bfb"
+      },
+      "sequence": 10
+    },
+    {
+      "eventId": "hook-64ead4cc44426eb21d534eeeb8afe978",
+      "findingId": "mimosa-260f0bbe817f3006a7659a1a",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "b8a0e9bc2cacb8071808ce16b05451299c95a2e097ad7fcd0ee87c96925f22e7",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 117,
+      "endLine": 117,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "b8a0e9bc2cacb8071808ce16b05451299c95a2e097ad7fcd0ee87c96925f22e7"
+      },
+      "sequence": 11
+    },
+    {
+      "eventId": "hook-f67ddf57f94964731d243ef55af522d5",
+      "findingId": "mimosa-2618a790647d8d0c040ac8ae",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "3cc668a34f7ad3d20fa9b51981d42bf1389a527a097a1279c12701d18444d89a",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 118,
+      "endLine": 118,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "3cc668a34f7ad3d20fa9b51981d42bf1389a527a097a1279c12701d18444d89a"
+      },
+      "sequence": 12
+    },
+    {
+      "eventId": "hook-b803c0a3e0fb570b45dc7806efb5b7ba",
+      "findingId": "mimosa-478b733b51a3d8bcf0dfba17",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "a255551a90b5250dc65e3d044ece1c3fc7af71d200c10c5adfb0f146a9312a94",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 119,
+      "endLine": 119,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "a255551a90b5250dc65e3d044ece1c3fc7af71d200c10c5adfb0f146a9312a94"
+      },
+      "sequence": 13
+    },
+    {
+      "eventId": "hook-bbe2b04c4cfd3a041deb3acf8bc7e48f",
+      "findingId": "mimosa-036f3612eb9c6f6b20fca044",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "49fd30ab76944159c5ee9de4aa7916dfd07775f9ce84baed36e4f339131d1297",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 120,
+      "endLine": 120,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "49fd30ab76944159c5ee9de4aa7916dfd07775f9ce84baed36e4f339131d1297"
+      },
+      "sequence": 14
+    },
+    {
+      "eventId": "hook-8c6ce90fba1111e9b422eb29598d820a",
+      "findingId": "mimosa-d56bb671503d655ca65f7843",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "de9532bfd62e1144a8313fd06f74968a23507e7ec7d6ca3ed0795f9c067421e6",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 121,
+      "endLine": 121,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "de9532bfd62e1144a8313fd06f74968a23507e7ec7d6ca3ed0795f9c067421e6"
+      },
+      "sequence": 15
+    },
+    {
+      "eventId": "hook-17ba38c942fc47c5e2ac873ed92b5a39",
+      "findingId": "mimosa-0c78442d97b3e53c726e1bb4",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "b3007fc69bf6b255e4f7e2635126476167b451f9882a5e1435f248dc1d00a455",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 122,
+      "endLine": 122,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "b3007fc69bf6b255e4f7e2635126476167b451f9882a5e1435f248dc1d00a455"
+      },
+      "sequence": 16
+    },
+    {
+      "eventId": "hook-dfc3b6285375dafe6c6802483125b374",
+      "findingId": "mimosa-a758b3c18658ba3d7472911f",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "a8f998b03298c057cd0c7ea8763fa8f80d086bde1c5d69dc44462dcc552c8b0a",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 120,
+      "endLine": 120,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "a8f998b03298c057cd0c7ea8763fa8f80d086bde1c5d69dc44462dcc552c8b0a"
+      },
+      "sequence": 17
+    },
+    {
+      "eventId": "hook-8bfe25edd4ee180157ca4304b97f465d",
+      "findingId": "mimosa-3b1e611091cd0b79c34f1604",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "8ea9f3a2b65c2869ce5b8fbb5e9a0a6c57680d84b01bae3e32633d2143ec1e65",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 121,
+      "endLine": 121,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "8ea9f3a2b65c2869ce5b8fbb5e9a0a6c57680d84b01bae3e32633d2143ec1e65"
+      },
+      "sequence": 18
+    },
+    {
+      "eventId": "hook-9f635d3520f858608f103049e62a251d",
+      "findingId": "mimosa-4991a18a5765cd0253e0692f",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "cae59f9984a8e40d75ea9e24df049276d3d044e5a81a978e6200613fc08ad600",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 122,
+      "endLine": 122,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "cae59f9984a8e40d75ea9e24df049276d3d044e5a81a978e6200613fc08ad600"
+      },
+      "sequence": 19
+    },
+    {
+      "eventId": "hook-d623f159c2dd6f41d709ef3c855ae88f",
+      "findingId": "mimosa-9667f7a6f2dc97dfbea20961",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "df3e71a952b0289b844e23a33b6cb165a9020c6dbea716e378583ff16ecac2a5",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 123,
+      "endLine": 123,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "df3e71a952b0289b844e23a33b6cb165a9020c6dbea716e378583ff16ecac2a5"
+      },
+      "sequence": 20
+    },
+    {
+      "eventId": "hook-72ab21ac7f48367540d1e16b8466e367",
+      "findingId": "mimosa-119c676ae730b3b57538d224",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "e1146bee7106715588b57990532064956004e9d02da4f9d12a58966f76ace8e6",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 124,
+      "endLine": 124,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "e1146bee7106715588b57990532064956004e9d02da4f9d12a58966f76ace8e6"
+      },
+      "sequence": 21
+    },
+    {
+      "eventId": "hook-f836cae730a0767f060eb5d3f40a4eb2",
+      "findingId": "mimosa-2dba55b8359d699bbcf88a70",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "698888e85c3d1b461f8251915389059b79853461f39f6f64a5aa2684f4ab2199",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 125,
+      "endLine": 125,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "698888e85c3d1b461f8251915389059b79853461f39f6f64a5aa2684f4ab2199"
+      },
+      "sequence": 22
+    },
+    {
+      "eventId": "hook-4bf5857c5de7d76390d553b14c370309",
+      "findingId": "mimosa-1ddff09eb4fbb80d65eab3d4",
+      "type": "static_fix_verified",
+      "at": "2026-09-14T20:28:50.100Z",
+      "identity": {
+        "projectRelativeFile": "packages/storage/src/clickhouse.ts",
+        "ruleId": "security",
+        "codeEvidenceHash": "0fb35c2b2c5966c949bf0757c07499d09bebd4cf8a56565b795fee1a1ec9b834",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 126,
+      "endLine": 126,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "0fb35c2b2c5966c949bf0757c07499d09bebd4cf8a56565b795fee1a1ec9b834"
+      },
+      "sequence": 23
+    }
+  ],
+  "observedFindingIds": [],
+  "verifiedFiles": [],
+  "recordedAt": "2026-09-14T20:28:50.494Z"
+}

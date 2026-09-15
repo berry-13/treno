@@ -19,7 +19,7 @@ final class APIClient {
 
     var baseUrl: String {
         get {
-            UserDefaults.standard.string(forKey: defaultsKey) ?? "http://127.0.0.1:8787"
+            UserDefaults.standard.string(forKey: defaultsKey) ?? "http://192.168.1.242:8787"
         }
         set {
             var trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -3,7 +3,7 @@
  * model file in data/models/ — improvements measurable in seconds, not days.
  *   npm run backtest
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '#core/config.ts';
 import { log } from '#core/log.ts';
@@ -26,7 +26,6 @@ function main() {
     log.error('backtest: no model files');
     process.exit(1);
   }
-  void cfg;
   const rows = extract(); // scored heuristic-v1 rows (train.ts owns the mapping)
   log.info('backtest: rows', { n: rows.length, models: models.map((m) => m.name) });
 
@@ -53,11 +52,24 @@ function main() {
 
   const fmt = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) + 's (n=' + xs.length + ')' : '—');
   const names = ['≤1m', '≤2m', '≤5m', '≤10m', '≤30m', '≤60m'];
-  console.log('\n| bucket | heuristic | operator | ' + models.map((m) => m.name).join(' | ') + ' |');
-  console.log('|---|---|---|' + models.map(() => '---').join('|') + '|');
+  const lines = [
+    '# treno backtest — offline replay of scored predictions',
+    '',
+    '- generated: ' + new Date().toISOString(),
+    '- rows: ' + rows.length + ' · models: ' + models.map((m) => m.name).join(', '),
+    '',
+    '| bucket | heuristic | operator | ' + models.map((m) => m.name).join(' | ') + ' |',
+    '|---|---|---|' + models.map(() => '---').join('|') + '|',
+  ];
   buckets.forEach((c, i) => {
-    console.log('| ' + names[i] + ' | ' + fmt(c.heur) + ' | ' + fmt(c.op) + ' | ' + c.mods.map(fmt).join(' | ') + ' |');
+    lines.push('| ' + names[i] + ' | ' + fmt(c.heur) + ' | ' + fmt(c.op) + ' | ' + c.mods.map(fmt).join(' | ') + ' |');
   });
+  console.log('\n' + lines.join('\n'));
+  const reports = join(cfg.dataDir, 'reports');
+  mkdirSync(reports, { recursive: true });
+  const day = new Date().toISOString().slice(0, 10);
+  writeFileSync(join(reports, 'backtest-' + day + '.md'), lines.join('\n') + '\n');
+  log.info('backtest: report written', { file: 'data/reports/backtest-' + day + '.md' });
 }
 void featureRow;
 if (process.argv[1] && process.argv[1].endsWith('backtest.ts')) main();

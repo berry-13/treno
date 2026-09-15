@@ -1,14 +1,14 @@
 {
   "schemaVersion": "mimosa-hook-status/v1",
-  "recordedAt": "2026-09-15T16:17:17.981Z",
-  "sessionId": "sess_eed95de0-6b86-4d3d-a83b-61add6606775",
+  "recordedAt": "2026-09-14T21:15:18.503Z",
+  "sessionId": "sess_e11bd652-e82f-4963-b897-df0c40e2856c",
   "event": "PostToolUse",
   "toolName": "Edit",
-  "file": "apps/ios/Widget/WidgetSupport.swift",
+  "file": "/Users/berry/.zcode/cli/memories/projects/treno-0215f2bf2c86819d/memory/treno-ml-direction.md",
   "outcome": "clear",
   "coverage": "complete",
   "findingCount": 0,
-  "durationMs": 5,
+  "durationMs": 4,
   "hostState": "hook_complete",
   "reportHint": ".mimosa/reports/"
 }

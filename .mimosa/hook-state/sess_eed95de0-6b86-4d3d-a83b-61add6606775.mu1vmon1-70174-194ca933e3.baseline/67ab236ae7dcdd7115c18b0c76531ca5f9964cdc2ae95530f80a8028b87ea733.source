@@ -1,0 +1,35 @@
+/**
+ * Dual-write hook smoke test (not part of the app): runs the real storage
+ * writers against a throwaway SQLite db with TRENO_CLICKHOUSE_URL set, then
+ * flushes. Verifies with distinctive values; check rows landed via:
+ *   tmp/ch/clickhouse client -q "SELECT ... WHERE run_id = 987654321"
+ */
+import { mkdirSync, rmSync } from 'node:fs';
+import { openDb } from '#core/db.ts';
+import { ensureNormalizedTables } from '#storage/schema.ts';
+import { ensureRun } from '#storage/runs.ts';
+import { insertObservation, upsertStopEvent, recordPrediction, insertServiceAlert, fillPredictionOutcomes } from '#storage/observations.ts';
+import { putSnapshot } from '#storage/rawStore.ts';
+import { ch } from '#storage/clickhouse.ts';
+
+const dir = '/Users/berry/Documents/treno/tmp/ch-smoke';
+rmSync(dir, { recursive: true, force: true });
+mkdirSync(dir, { recursive: true });
+const db = openDb(dir + '/smoke.db');
+ensureNormalizedTables(db);
+
+const args = { operator: 'TESTOP' as const, serviceDate: '2026-09-14', trainNumber: '99999', originStopId: 'S00001', schedDepSec: 36000, source: 'test' };
+const runId = ensureRun(db, args);
+insertObservation(db, { runId, ts: 1789490000000, source: 'test', observedAt: 1789490000000, delaySeconds: 42, locationId: 'S00001', locationName: 'Smoke Station', locationKind: 'station', status: 'LATE', rawHash: null, qualityFlags: ['SMOKE'] });
+upsertStopEvent(db, { runId, stopId: 'S00002', stopSequence: 1, schedArrEpoch: 1789490600000, actualArrEpoch: 1789490900000, arrDelaySec: 300, source: 'test' });
+const predId = recordPrediction(db, { modelVersion: 'smoke-v1', runId, stopId: 'S00002', generatedAt: 1789490050000, schedArrEpoch: 1789490600000, operatorEtaEpoch: 1789490800000, ourP10: 1789490700000, ourP50: 1789490750000, ourP90: 1789490950000, confidence: 0.9, featuresJson: '{"smoke":true}' });
+insertServiceAlert(db, { source: 'test', runId, stopId: null, title: 'smoke alert', description: 'x', severity: 'INFO', raw: { smoke: 1 } });
+putSnapshot(db, dir, { source: 'test', entityKey: 'smoke', fetchedAt: 1789490000000, httpStatus: 200, etag: null, lastModified: null, payloadJson: '{"a":1}', relevantHash: null, parserVersion: 'smoke' });
+// same run again — must NOT re-queue into train_runs (mirror dedup path)
+ensureRun(db, args);
+// actual arrival lands → outcome for the prediction
+fillPredictionOutcomes(db, runId, 'S00002', 1789490900000);
+
+await ch.flush();
+console.log(JSON.stringify({ ok: true, runId, predId, p50ms: 1789490750000 }));
+process.exit(0);

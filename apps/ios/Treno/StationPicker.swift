@@ -47,11 +47,6 @@ struct StationPickerSheet: View {
                             ForEach(favoriteStations) { st in stationRow(st) }
                         }
                     }
-                    if !frequentStations.isEmpty {
-                        Section("Frequent") {
-                            ForEach(frequentStations) { st in stationRow(st) }
-                        }
-                    }
                     Section("Main stations") {
                         ForEach(Self.suggested) { st in stationRow(st) }
                     }
@@ -59,6 +54,10 @@ struct StationPickerSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color.tBg)
+            // breathing room between the header and the first station rows
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Color.tBg.frame(height: 10)
+            }
             .searchable(
                 text: $query,
                 placement: .navigationBarDrawer(displayMode: .always),
@@ -161,7 +160,8 @@ struct StationPickerSheet: View {
                 store.toggleFavorite(station.id)
             }
             .labelStyle(.iconOnly).buttonStyle(.borderless)
-            .foregroundStyle(.tPrimary).frame(minWidth: 44, minHeight: 44)
+            .foregroundStyle(store.favorites.contains(station.id) ? Color.tStar : Color.tDim)
+            .frame(minWidth: 44, minHeight: 44)
         }
     }
 

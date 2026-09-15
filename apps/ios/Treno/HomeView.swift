@@ -49,15 +49,13 @@ struct HomeView: View {
             ?? store.trips.first
     }
     private var stations: [Station] {
-        let ids = store.favorites.isEmpty ? Array(store.frequentStations(limit: 3)) : store.favorites.sorted()
-        let resolved = ids.compactMap { id -> Station? in
+        store.favorites.sorted().compactMap { id -> Station? in
             let name = catalog.first { $0.stopId == id }?.name
                 ?? StationPickerSheet.suggested.first { $0.stopId == id }?.name
                 ?? store.trips.first { $0.fromStopId == id }?.fromName
                 ?? store.trips.first { $0.toStopId == id }?.toName
             return name.map { Station(stopId: id, name: $0) }
         }
-        return resolved
     }
 
     var body: some View {
@@ -66,7 +64,7 @@ struct HomeView: View {
                 GlassEffectContainer(spacing: 12) {
                     HStack(spacing: 12) {
                         Button { showStations = true } label: {
-                            Label("Find a station", systemImage: "magnifyingglass")
+                            Label("Find a trip", systemImage: "magnifyingglass")
                                 .font(.body).foregroundStyle(.tFg)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 20).frame(minHeight: 54)
@@ -102,7 +100,7 @@ struct HomeView: View {
 
                 if !stations.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
-                        SectionHeading(title: store.favorites.isEmpty ? "Recent stations" : "Your stations")
+                        SectionHeading(title: "Your stations")
                         VStack(spacing: 0) {
                             ForEach(Array(stations.prefix(4).enumerated()), id: \.element.id) { index, station in
                                 Button {
@@ -110,8 +108,8 @@ struct HomeView: View {
                                     openStation(station.id, station.name)
                                 } label: {
                                     HStack(spacing: 14) {
-                                        Image(systemName: store.favorites.contains(station.id) ? "star.fill" : "clock")
-                                            .font(.body).foregroundStyle(.tPrimary).frame(width: 24)
+                                        Image(systemName: "star.fill")
+                                            .font(.body).foregroundStyle(Color.tStar).frame(width: 24)
                                         Text(station.name).font(.body.weight(.medium)).foregroundStyle(.tFg)
                                         Spacer(minLength: 4)
                                         Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
@@ -122,7 +120,7 @@ struct HomeView: View {
                         }.background(Color.tCard, in: RoundedRectangle(cornerRadius: 22))
                     }
                 }
-            }.padding(.horizontal, 20).padding(.bottom, 28)
+            }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 28)
         }
         .background { TrenoBackground() }
         .navigationTitle("For you")
@@ -140,9 +138,16 @@ struct HomeView: View {
             }
         }
         .sheet(isPresented: $showStations) {
-            StationPickerSheet(currentId: "") { station in openStation(station.id, station.name) }
+            TripSearchSheet()
         }
         .task { catalog = (try? await StationCatalog.shared.stations()) ?? [] }
+        // debug: `--find` opens the trip finder so the sheet is capturable
+        .task {
+            if ProcessInfo.processInfo.arguments.contains("--find") {
+                try? await Task.sleep(for: .milliseconds(400))
+                showStations = true
+            }
+        }
         .task(id: store.trips) { await summaries.load(store.trips) }
         .refreshable { await summaries.load(store.trips) }
         .onReceive(refresh) { _ in Task { await summaries.load(store.trips) } }

@@ -1,14 +1,14 @@
 {
   "schemaVersion": "mimosa-hook-status/v1",
-  "recordedAt": "2026-09-13T23:21:56.425Z",
+  "recordedAt": "2026-09-15T17:16:04.125Z",
   "sessionId": "sess_eed95de0-6b86-4d3d-a83b-61add6606775",
   "event": "PostToolUse",
   "toolName": "Edit",
-  "file": "Treno/StationPicker.swift",
+  "file": "Treno/HomeView.swift",
   "outcome": "clear",
   "coverage": "complete",
   "findingCount": 0,
-  "durationMs": 3,
+  "durationMs": 23,
   "hostState": "hook_complete",
   "reportHint": ".mimosa/reports/"
 }

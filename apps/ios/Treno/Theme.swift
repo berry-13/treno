@@ -18,6 +18,8 @@ extension ShapeStyle where Self == Color {
     static var tEarly: Color { .tGood }
     static var tWarn: Color { .tLate }
     static var tDanger: Color { .red }
+    /// favorites star — proper yellow, distinct from the orange "late" semantic
+    static var tStar: Color { Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.8, blue: 0.27, alpha: 1) : UIColor(red: 0.85, green: 0.62, blue: 0.02, alpha: 1) }) }
 }
 
 // Quiet color behind the controls gives the native material something to

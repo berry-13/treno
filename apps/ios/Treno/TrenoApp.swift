@@ -35,6 +35,9 @@ struct RootView: View {
                         UserDefaults.standard.set(name, forKey: "stationName")
                         boardPath = NavigationPath()
                         tab = .stations
+                    }, onOpenTrain: { runId in
+                        tab = .home
+                        homePath.append(runId)
                     })
                     .navigationDestination(for: Int.self) { id in
                         TrainDetailView(runId: id)

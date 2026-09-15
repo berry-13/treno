@@ -1,14 +1,14 @@
 {
   "schemaVersion": "mimosa-hook-status/v1",
-  "recordedAt": "2026-09-15T16:17:17.981Z",
+  "recordedAt": "2026-09-15T17:36:19.237Z",
   "sessionId": "sess_eed95de0-6b86-4d3d-a83b-61add6606775",
   "event": "PostToolUse",
   "toolName": "Edit",
-  "file": "apps/ios/Widget/WidgetSupport.swift",
+  "file": "apps/ios/Treno/TripSearchSheet.swift",
   "outcome": "clear",
   "coverage": "complete",
   "findingCount": 0,
-  "durationMs": 5,
+  "durationMs": 3,
   "hostState": "hook_complete",
   "reportHint": ".mimosa/reports/"
 }

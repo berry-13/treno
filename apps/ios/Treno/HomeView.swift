@@ -35,6 +35,8 @@ final class JourneySummaries: ObservableObject {
 
 struct HomeView: View {
     let openStation: (String, String) -> Void
+    /// opens a train as a full page from anywhere in Home (e.g. trip finder)
+    let onOpenTrain: (Int) -> Void
     @StateObject private var store = TripStore.shared
     @StateObject private var summaries = JourneySummaries()
     @State private var showAddTrip = false
@@ -138,7 +140,10 @@ struct HomeView: View {
             }
         }
         .sheet(isPresented: $showStations) {
-            TripSearchSheet()
+            TripSearchSheet(onOpenTrain: { runId in
+                showStations = false
+                onOpenTrain(runId)
+            })
         }
         .task { catalog = (try? await StationCatalog.shared.stations()) ?? [] }
         // debug: `--find` opens the trip finder so the sheet is capturable

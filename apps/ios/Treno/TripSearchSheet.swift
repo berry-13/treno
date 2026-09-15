@@ -1,17 +1,23 @@
 import SwiftUI
 
-/// Transient trip finder: pick a start and a stop station, see the next
-/// direct trains. Nothing is saved — unlike saved journeys/trips.
+/// Transient trip finder: pick a start and a stop station, optionally a
+/// different day/hour, and see the direct trains. Nothing is saved.
 struct TripSearchSheet: View {
+    /// opens the train as a full page (sheet closes itself first)
+    let onOpenTrain: (Int) -> Void
+
     @Environment(\.dismiss) private var dismiss
 
     @State private var from: Station?
     @State private var to: Station?
+    @State private var when = Date.now
     @State private var pickingFrom = false
     @State private var pickingTo = false
     @State private var journeys: [JourneyRow] = []
     @State private var loading = false
     @State private var failed = false
+
+    private var isNow: Bool { abs(when.timeIntervalSinceNow) < 120 }
 
     var body: some View {
         NavigationStack {
@@ -21,6 +27,20 @@ struct TripSearchSheet: View {
                         .buttonStyle(.plain)
                     Button(action: { pickingTo = true }) { endpointRow("To", to) }
                         .buttonStyle(.plain)
+                    HStack {
+                        DatePicker("When", selection: $when, displayedComponents: [.date, .hourAndMinute])
+                            .labelsHidden()
+                            .environment(\.locale, Locale(identifier: "it_IT"))
+                        if !isNow {
+                            Button("Now") {
+                                when = Date.now
+                                Task { await load() }
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
                     Button {
                         let f = from
                         from = to
@@ -48,8 +68,12 @@ struct TripSearchSheet: View {
                         }
                         ForEach(journeys) { j in
                             if let runId = j.runId {
-                                NavigationLink(value: runId) { journeyRow(j) }
-                                    .buttonStyle(.plain)
+                                Button {
+                                    onOpenTrain(runId)
+                                } label: {
+                                    journeyRow(j)
+                                }
+                                .buttonStyle(.plain)
                             } else {
                                 journeyRow(j).opacity(0.7)
                             }
@@ -66,13 +90,11 @@ struct TripSearchSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .navigationDestination(for: Int.self) { runId in
-                TrainDetailView(runId: runId)
-            }
             .refreshable { await load() }
         }
         .preferredColorScheme(.dark)
         .tint(.tPrimary)
+        .onChange(of: when) { _, _ in Task { await load() } }
         .sheet(isPresented: $pickingFrom) {
             StationPickerSheet(currentId: from?.stopId ?? "") { st in
                 from = st
@@ -160,7 +182,7 @@ struct TripSearchSheet: View {
         loading = true
         failed = false
         do {
-            journeys = try await APIClient.shared.journeys(from: f.stopId, to: t.stopId, limit: 8)
+            journeys = try await APIClient.shared.journeys(from: f.stopId, to: t.stopId, at: isNow ? nil : when, limit: 8)
         } catch {
             failed = true
             journeys = []

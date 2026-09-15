@@ -70,8 +70,12 @@ final class APIClient {
         try await get("/api/stations")
     }
 
-    func journeys(from: String, to: String, limit: Int = 8) async throws -> [JourneyRow] {
-        let r: JourneysResponse = try await get("/api/journeys?from=\(from)&to=\(to)&limit=\(limit)")
+    func journeys(from: String, to: String, at: Date? = nil, limit: Int = 8) async throws -> [JourneyRow] {
+        var path = "/api/journeys?from=\(from)&to=\(to)&limit=\(limit)"
+        if let at {
+            path += "&at=" + String(Int(at.timeIntervalSince1970 * 1000))
+        }
+        let r: JourneysResponse = try await get(path)
         return r.journeys
     }
 

@@ -180,7 +180,13 @@ export function buildApp(db: Db) {
     const to = c.req.query('to') ?? '';
     const limit = Math.min(Number(c.req.query('limit') ?? 8), 20);
     if (from === '' || to === '') return c.json({ error: 'from and to required' }, 400);
-    const journeys = journeysFor(db, from, to, Date.now(), limit);
+    // optional reference time (ms epoch) for "other day / other hour" searches;
+    // clamped to [yesterday, +30d] so the service-date windows stay sane
+    const atParam = Number(c.req.query('at'));
+    const at = Number.isFinite(atParam) && atParam > 1_500_000_000_000
+      ? Math.min(Math.max(atParam, Date.now() - 86_400_000), Date.now() + 30 * 86_400_000)
+      : Date.now();
+    const journeys = journeysFor(db, from, to, at, limit);
     return c.json({ from, to, generatedAt: Date.now(), journeys });
   });
 

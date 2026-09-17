@@ -374,6 +374,11 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
       alertsRun24h: prediction.features.alertsRun24h,
       alertsRoute24h: prediction.features.alertsRoute24h,
       precipMm: prediction.features.precipMm,
+      strikeActive: prediction.features.strikeActive,
+      eventHoursToStart: prediction.features.eventHoursToStart,
+      holiday: prediction.features.holiday,
+      upstreamStopMaxDelaySec: prediction.features.upstreamStopMaxDelaySec,
+      upstreamStopDelayedCount: prediction.features.upstreamStopDelayedCount,
     };
     const corrected = applyResidual(residual, fi, prediction.p10, prediction.p50, prediction.p90);
     prediction = {

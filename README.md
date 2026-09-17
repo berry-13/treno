@@ -267,6 +267,31 @@ Polling that internal API at collector scale would violate their terms. If
 they ever publish a documented live API, the provider pattern to follow is
 `packages/providers/vt.ts` (envelope + parse → `ingestSnapshot`).
 
+## Event calendar — strikes, stadium fixtures, holidays (2026-09-18)
+
+Exogenous event features for the model (GOAL §51 context + propagation
+signals), all point-in-time recorded into `features_json`:
+
+- **Stadium fixtures** at San Siro — auto-imported daily from ESPN's keyless
+  scoreboard (Serie A + UCL + UEL, ±3 days, one fetch per league per day;
+  descriptive UA). Crowd load is attributed to the Milano Garibaldi/Cadorna/
+  Bovisa/Centrale/Villapizzone stations in a ±3h/2h window.
+- **Italian holidays** 2026–2027 — computed locally (computus), no fetch.
+- **Strikes** — curated file (the official portal has no API and is
+  unreachable from many hosts). Maintain `<TRENO_DATA_DIR>/calendar/strikes.json`
+  using the format in `deploy/calendar/strikes.template.json`; rail strikes in
+  Italy are filed ≥10 days ahead, so a hand-updated file is honest and
+  sufficient. On the server, place it inside the `treno-data` volume, e.g.:
+  `docker compose cp deploy/calendar/strikes.json collector:/data/calendar/strikes.json`
+  (adjust if TRENO_DATA_DIR differs). The collector re-reads it daily.
+
+New prediction features (append-only — the serving model ignores them until
+the nightly retrain): `strikeActive`, `eventHoursToStart`, `holiday`,
+`upstreamStopMaxDelaySec` / `upstreamStopDelayedCount` (§51 knock-on queue at
+the run's next stop, last 45 min). Manual import:
+`npx tsx packages/collector/src/events.ts` (or `docker compose run --rm
+collector npx tsx packages/collector/src/events.ts` on the server).
+
 ## Configuration (env)
 
 ```

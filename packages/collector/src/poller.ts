@@ -17,6 +17,7 @@ import { updateProviderHealth } from '#storage/observations.ts';
 import { refreshSegmentStats, logSegmentSummary } from '#storage/segments.ts';
 import { refreshWeather } from './weather.ts';
 import { refreshGauges } from './weather-arpa.ts';
+import { refreshCalendar } from './events.ts';
 import { ingestSnapshot, stateSummaryLine, type FusedState } from './pipeline.ts';
 import { discoverRuns, type DiscoveredRun } from './discover.ts';
 
@@ -174,6 +175,7 @@ export class Collector {
   private maintenance(now: number): void {
     void refreshWeather(); // hourly rain feature for the model
     void refreshGauges(); // ARPA rain-gauge actuals (null until geo join lands)
+    void refreshCalendar(this.db); // strikes/stadium/holiday calendar (daily, self-gated)
     if (now - this.lastStatsRefresh > 10 * 60_000) {
       this.lastStatsRefresh = now;
       try {

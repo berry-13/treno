@@ -21,6 +21,7 @@ import type { RunRecord } from '#storage/runs.ts';
 import type { FusedState } from './pipeline.ts';
 import { currentPrecipMm, precipSource } from './weather.ts';
 import { gaugePrecipMm } from './weather-arpa.ts';
+import { eventFeatures, upstreamFeatures } from './events.ts';
 import { stopDepartures } from '#gtfs/schedule.ts';
 import { bareTrainNumber } from './discover.ts';
 import { romeWallToEpoch, romeYmd, secondsToHms } from '#core/time.ts';
@@ -60,6 +61,12 @@ export interface HeuristicPrediction {
     alertsRoute24h: number | null;         // alerts at this route's stops (24h)
     precipMm: number | null;               // rain used: ARPA gauge measurement preferred, DWD ICON forecast fallback
     precipSource: string | null;           // 'arpa-gauge' | 'dwd-icon' | null (provenance)
+    // exogenous calendar + §51 propagation (point-in-time from calendar_events)
+    strikeActive: number | null;           // rail/general strike ongoing or starting within 3h
+    eventHoursToStart: number | null;      // signed hours to nearest strike/stadium event (±24)
+    holiday: 0 | 1;                        // service day is an Italian holiday
+    upstreamStopMaxDelaySec: number | null;   // worst departure delay at the next stop, last 45 min
+    upstreamStopDelayedCount: number | null;  // trains leaving the next stop ≥5 min late, last 45 min
   };
 }
 
@@ -169,6 +176,9 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
     features: ((): HeuristicPrediction['features'] => {
       const ctx = contextFeatures(db, run);
       const al = alertFeatures(db, run);
+      const ev = eventFeatures(db, run.service_date, events.map((e) => e.stop_id));
+      const nextStopId = events[anchorIdx >= 0 ? anchorIdx + 1 : 0]?.stop_id ?? null;
+      const up = upstreamFeatures(db, nextStopId);
       return {
         anchorKind,
         anchorStopId: anchorIdx >= 0 ? events[anchorIdx]!.stop_id : null,
@@ -186,6 +196,11 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
         alertsRoute24h: al.onRoute,
         precipMm: gaugePrecipMm() ?? currentPrecipMm(),
         precipSource: gaugePrecipMm() != null ? 'arpa-gauge' : precipSource(),
+        strikeActive: ev.strikeActive,
+        eventHoursToStart: ev.eventHoursToStart,
+        holiday: ev.holiday,
+        upstreamStopMaxDelaySec: up.upstreamStopMaxDelaySec,
+        upstreamStopDelayedCount: up.upstreamStopDelayedCount,
       };
     })(),
   };

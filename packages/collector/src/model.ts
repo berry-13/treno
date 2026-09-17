@@ -36,6 +36,13 @@ export interface FeatureInput {
   alertsRun24h: number | null;
   alertsRoute24h: number | null;
   precipMm: number | null;
+  // added 2026-09-18 — optional so pre-event features_json rows still decode;
+  // featureRow treats absent as "no event / no queue"
+  strikeActive?: number | null;
+  eventHoursToStart?: number | null;
+  holiday?: number | null;
+  upstreamStopMaxDelaySec?: number | null;
+  upstreamStopDelayedCount?: number | null;
 }
 
 export const FEATURE_NAMES = [
@@ -60,6 +67,13 @@ export const FEATURE_NAMES = [
   'alertsRun',
   'alertsRoute',
   'precip',
+  // appended 2026-09-18 (append-only: older model files keep working — dot()
+  // iterates the stored coefficient length and GBM trees reference stored indices)
+  'strikeActive',
+  'eventHours',
+  'holiday',
+  'upstreamMaxDelay',
+  'upstreamDelayed',
 ] as const;
 
 const cap = (v: number, lim: number): number => Math.max(-lim, Math.min(lim, v));
@@ -94,6 +108,12 @@ export function featureRow(x: FeatureInput): number[] {
     Math.min(x.alertsRun24h ?? 0, 10) / 5,
     Math.min(x.alertsRoute24h ?? 0, 10) / 5,
     Math.min(x.precipMm ?? 0, 10) / 5,
+    // no nearby event encodes as the cap (24h) — same side as "far away"
+    x.strikeActive ?? 0,
+    cap(x.eventHoursToStart ?? 24, 24) / 24,
+    x.holiday ?? 0,
+    cap(x.upstreamStopMaxDelaySec ?? 0, 1800) / 600,
+    Math.min(x.upstreamStopDelayedCount ?? 0, 10) / 5,
   ];
 }
 

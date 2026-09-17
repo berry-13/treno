@@ -38,6 +38,11 @@ export function ensureNormalizedTables(db: Db): void {
   db.exec(`CREATE TABLE IF NOT EXISTS service_alerts(id INTEGER PRIMARY KEY, source TEXT NOT NULL, run_id INTEGER, stop_id TEXT, title TEXT, description TEXT, severity TEXT, start_epoch INTEGER, end_epoch INTEGER, payload_hash TEXT NOT NULL UNIQUE, raw_json TEXT, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE TABLE IF NOT EXISTS atm_stop_observations(id INTEGER PRIMARY KEY, stop_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, wait_messages TEXT, raw_hash TEXT, quality_flags TEXT)`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_atmobs_stop ON atm_stop_observations(stop_id, fetched_at)');
+  // exogenous calendar (strikes, stadium events, holidays) used for point-in-time
+  // prediction features; kind: 'strike' | 'stadium' | 'holiday'. scope: 'network'
+  // (rail/general strikes) or 'stations' with stations_csv set. Re-importable.
+  db.exec(`CREATE TABLE IF NOT EXISTS calendar_events(id INTEGER PRIMARY KEY, source TEXT NOT NULL, external_id TEXT NOT NULL, kind TEXT NOT NULL, title TEXT, start_epoch INTEGER NOT NULL, end_epoch INTEGER NOT NULL, scope TEXT NOT NULL DEFAULT 'network', stations_csv TEXT, created_at INTEGER NOT NULL, UNIQUE(source, external_id))`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_calevent_window ON calendar_events(start_epoch, end_epoch)');
   // migrations for databases created before these columns existed
   try { db.exec('ALTER TABLE predictions ADD COLUMN features_json TEXT'); } catch { /* column exists */ }
   try { db.exec('ALTER TABLE train_observations ADD COLUMN quality_flags TEXT'); } catch { /* column exists */ }

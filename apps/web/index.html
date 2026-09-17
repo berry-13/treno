@@ -39,6 +39,12 @@
   .three div span { display:block; }
   .lbl { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.6px; }
   .val { font-size:16px; font-weight:650; }
+  .covbars { display:flex; align-items:flex-end; gap:1px; height:52px; margin-top:10px; }
+  .covbars i { flex:1; min-width:2px; background:var(--accent); border-radius:1px 1px 0 0; }
+  .covbars i.night { background:#2a3345; }
+  .covbars i.gap { background:var(--bad); }
+  .trend-down { color:var(--good); font-weight:600; } .trend-up { color:var(--bad); font-weight:600; } .trend-flat { color:var(--dim); }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--dim); font-weight:600; margin:26px 0 0; }
 </style>
 </head>
 <body>
@@ -48,6 +54,7 @@
   <input id="q" type="search" placeholder="train number (e.g. 2174) — live runs below" autocomplete="off">
   <div id="list"></div>
   <div id="detail"></div>
+  <div id="ops"></div>
 </div>
 <script>
 'use strict';
@@ -148,8 +155,48 @@ $('#q').addEventListener('keydown', async (ev) => {
   else $('#detail').innerHTML = '<div class="card muted">no run found for ' + esc(v) + '</div>';
 });
 
+// collection heartbeat + nightly backtest trend (ops view)
+async function loadOps() {
+  try {
+    const [covRes, btRes] = await Promise.all([fetch('/api/coverage'), fetch('/api/backtest?limit=7')]);
+    const cov = await covRes.json();
+    const bt = await btRes.json();
+    const start = Math.ceil(cov.from / cov.windowMs) * cov.windowMs;
+    const byBucket = new Map(cov.buckets.map((b) => [b.bucket, b]));
+    const maxObs = Math.max(...cov.buckets.map((b) => b.observations), 1);
+    const bars = [];
+    for (let t = start; t <= Date.now(); t += cov.windowMs) {
+      const b = byBucket.get(t) || { observations: 0, stateUpdates: 0, snapshots: {} };
+      const hour = new Date(t).toLocaleString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+      const srcs = Object.entries(b.snapshots).map(([s, n]) => s + ':' + n).join(' ') || 'no polls';
+      const service = Number(new Date(t).toLocaleString('en-GB', { timeZone: 'Europe/Rome', hour: '2-digit', hour12: false }));
+      const cls = b.observations > 0 ? '' : (service >= 6 && service < 23 ? 'gap' : 'night');
+      bars.push('<i class="' + cls + '" style="height:' + Math.max(6, Math.round(100 * b.observations / maxObs)) + '%" title="' + hour + ' · ' + b.observations + ' obs · ' + b.stateUpdates + ' state updates · ' + srcs + '"></i>');
+    }
+    const total48 = cov.buckets.reduce((a, b) => a + b.observations, 0);
+    const covHtml =
+      '<h2>collection heartbeat — 48h</h2><div class="card">' +
+      '<div class="row"><span class="num">' + total48.toLocaleString('it-IT') + '</span><span class="muted">observations · red = expected trains but none observed</span></div>' +
+      '<div class="covbars">' + bars.join('') + '</div></div>';
+    const mdTable = (md) => {
+      const rows = md.split('\n').filter((l) => l.trim().startsWith('|') && !/\|[\s:-]+\|/.test(l));
+      const cells = rows.map((l) => l.split('|').slice(1, -1).map((s) => s.trim()));
+      if (!cells.length) return '<div class="tiny muted">' + esc(md.split('\n')[0] || '') + '</div>';
+      return '<table><thead><tr>' + cells[0].map((x) => '<th>' + esc(x) + '</th>').join('') + '</tr></thead><tbody>' +
+        cells.slice(1).map((r) => '<tr>' + r.map((x) => '<td>' + esc(x) + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+    };
+    const btHtml = !bt.reports.length ? '' :
+      '<h2>prediction accuracy — nightly backtest (MAE, lower is better)</h2><div class="card">' +
+      bt.reports.map((r) => '<div class="row" style="margin-top:8px"><span class="badge">' + r.date + '</span></div>' + mdTable(r.markdown)).join('') +
+      '<div class="tiny muted" style="margin-top:8px">heuristic = schedule-only · operator = Trenord ETA · residual-v1 = ours. Reports regenerate nightly at 03:30.</div></div>';
+    $('#ops').innerHTML = covHtml + btHtml;
+  } catch { $('#ops').innerHTML = '<div class="card muted tiny">ops panels unavailable (old server image — redeploy to enable)</div>'; }
+}
+
 loadList();
+loadOps();
 setInterval(loadList, 10000);
+setInterval(loadOps, 300000);
 </script>
 </body>
 </html>

@@ -12,7 +12,7 @@
  */
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadConfig } from '#core/config.ts';
 import { getRows, getRow, type Db } from '#core/db.ts';
@@ -59,6 +59,8 @@ function runWithState(db: Db, where: string, params: Array<string | number>, lim
 
 export function buildApp(db: Db) {
   const app = new Hono();
+  // nightly backtest reports land here (03:30 trainer loop)
+  const reportsDir = join(loadConfig().dataDir, 'reports');
 
   app.get('/api/health', (c) => {
     const counts = {
@@ -151,6 +153,43 @@ export function buildApp(db: Db) {
     const q = (c.req.query('q') ?? '').trim();
     if (q.length < 2) return c.json([]);
     return c.json(searchStops(db, q, 20));
+  });
+
+  // collection heartbeat: per-15-min counts over the last 48h so feed gaps
+  // (a stalled collector shows as a run of empty buckets) are visible without
+  // server shell access
+  app.get('/api/coverage', (c) => {
+    const since = Date.now() - 48 * 3600_000;
+    const snaps = getRows<{ bucket: number; source: string; n: number }>(
+      db, 'SELECT CAST(fetched_at/900000 AS INTEGER)*900000 AS bucket, source, COUNT(*) AS n FROM source_snapshots WHERE fetched_at>=? GROUP BY bucket, source', [since]);
+    const obs = getRows<{ bucket: number; n: number }>(
+      db, 'SELECT CAST(ts/900000 AS INTEGER)*900000 AS bucket, COUNT(*) AS n FROM train_observations WHERE ts>=? GROUP BY bucket', [since]);
+    const states = getRows<{ bucket: number; n: number }>(
+      db, 'SELECT CAST(updated_at/900000 AS INTEGER)*900000 AS bucket, COUNT(*) AS n FROM train_state WHERE updated_at>=? GROUP BY bucket', [since]);
+    const map = new Map<number, { bucket: number; observations: number; stateUpdates: number; snapshots: Record<string, number> }>();
+    const at = (ms: number) => {
+      let e = map.get(ms);
+      if (!e) map.set(ms, e = { bucket: ms, observations: 0, stateUpdates: 0, snapshots: {} });
+      return e;
+    };
+    for (const r of snaps) at(r.bucket).snapshots[r.source] = r.n;
+    for (const r of obs) at(r.bucket).observations += r.n;
+    for (const r of states) at(r.bucket).stateUpdates += r.n;
+    return c.json({ windowMs: 900_000, from: since, generatedAt: Date.now(), buckets: [...map.values()].sort((a, b) => a.bucket - b.bucket) });
+  });
+
+  // nightly backtest reports (markdown tables, newest first)
+  app.get('/api/backtest', (c) => {
+    const limit = Math.min(Number(c.req.query('limit') ?? 5) || 5, 20);
+    let names: string[] = [];
+    try {
+      names = readdirSync(reportsDir).filter((f) => /^backtest-\d{4}-\d{2}-\d{2}\.md$/.test(f)).sort().reverse();
+    } catch { names = []; }
+    const reports = names.slice(0, limit).map((f) => ({
+      date: f.slice('backtest-'.length, f.length - '.md'.length),
+      markdown: readFileSync(join(reportsDir, f), 'utf8'),
+    }));
+    return c.json({ latest: reports[0]?.date ?? null, reports });
   });
 
   // all rail stations with coords + today's departure volume (map + nearest)

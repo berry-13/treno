@@ -39,9 +39,11 @@ struct TripDetailView: View {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, journey in
                     VStack(spacing: 0) {
                         if let runId = journey.runId {
-                            NavigationLink(value: runId) { journeyContent(journey, isNext: index == 0) }.buttonStyle(.plain)
-                        } else { journeyContent(journey, isNext: index == 0) }
-                        if journey.runId != nil {
+                            NavigationLink(value: TrainRef(runId: runId, fromStopId: trip.fromStopId, toStopId: trip.toStopId)) { journeyContent(journey) }.buttonStyle(.plain)
+                        } else { journeyContent(journey) }
+                        // the glass follow action belongs to the train you're
+                        // about to catch, not to every row
+                        if journey.runId != nil && index == 0 {
                             Button {
                                 guard let runId = journey.runId else { return }
                                 if trackingRunId == runId {
@@ -66,7 +68,7 @@ struct TripDetailView: View {
             }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 28)
         }
         .background { TrenoBackground() }
-        .navigationTitle(trip.name.isEmpty ? "Journey" : trip.name)
+        .navigationTitle(trip.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Edit") { editing = true } } }
         .refreshable { await load() }
@@ -91,38 +93,40 @@ struct TripDetailView: View {
         }
     }
 
-    private func journeyContent(_ journey: JourneyRow, isNext: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
+    private func journeyContent(_ journey: JourneyRow) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
                 if let line = journey.line { TBadge(line, .tPrimary) }
-                Text("Train \(journey.trainNumber)").font(.footnote).foregroundStyle(.tMuted)
-                Spacer()
-                Text(Fmt.delayShort(journey.departureDelay)).font(.footnote.weight(.medium)).foregroundStyle(StatusUI.delayColor(journey.departureDelay))
-            }
-            HStack {
-                journeyTime(journey.expectedDeparture, label: "Departure")
-                Spacer()
-                VStack(spacing: 6) {
-                    Text("\(max(1, Int((journey.arrEpoch - journey.depEpoch) / 60_000))) min").font(.caption).foregroundStyle(.tMuted)
-                    Image(systemName: "arrow.right").font(.subheadline).foregroundStyle(.tertiary)
+                if let final = journey.finalDestinationName, final != trip.toName {
+                    Text("via \(final)").font(.footnote).foregroundStyle(.tMuted).lineLimit(1)
                 }
                 Spacer()
-                journeyTime(journey.expectedArrival, label: "Arrival", alignment: .trailing)
+                if let delay = journey.departureDelay, abs(delay) >= 60 {
+                    Text(Fmt.delayShort(delay)).font(.footnote.weight(.semibold)).foregroundStyle(StatusUI.delayColor(delay))
+                }
             }
-            HStack {
-                Text(Fmt.departure(journey.expectedDeparture, now: now))
+            HStack(alignment: .firstTextBaseline, spacing: 14) {
+                Text(Fmt.hhmm(journey.expectedDeparture)).font(.system(size: 34, weight: .semibold))
+                    .monospacedDigit().foregroundStyle(.tFg)
+                VStack(spacing: 2) {
+                    Text("\(max(1, Int((journey.arrEpoch - journey.depEpoch) / 60_000))) min")
+                        .font(.caption2).foregroundStyle(.tMuted)
+                    Image(systemName: "arrow.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+                Text(Fmt.hhmm(journey.expectedArrival)).font(.system(size: 34, weight: .semibold))
+                    .monospacedDigit().foregroundStyle(.tFg)
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 10) {
+                if let delay = journey.departureDelay, abs(delay) >= 60 {
+                    Text(Fmt.hhmm(journey.depEpoch)).strikethrough().font(.footnote.monospacedDigit()).foregroundStyle(.tMuted)
+                }
+                Text(Fmt.departure(journey.expectedDeparture, now: now)).font(.footnote.weight(.medium)).foregroundStyle(.tPrimary)
                 Spacer()
-                if let platform = Fmt.platform(journey.platform) { Text("Platform \(platform)") }
-                if journey.runId != nil { Image(systemName: "chevron.right").font(.caption.weight(.semibold)) }
-            }.font(.subheadline).foregroundStyle(.tMuted)
+                if let platform = Fmt.platform(journey.platform) { PlatformChip(platform: platform) }
+                if journey.runId != nil { Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary) }
+            }
         }.padding(20).contentShape(Rectangle())
-    }
-
-    private func journeyTime(_ epoch: Double, label: String, alignment: HorizontalAlignment = .leading) -> some View {
-        VStack(alignment: alignment, spacing: 5) {
-            Text(label).font(.footnote).foregroundStyle(.tMuted)
-            Text(Fmt.hhmm(epoch)).font(.title.weight(.medium)).monospacedDigit().foregroundStyle(.tFg)
-        }
     }
 
     private func load() async {

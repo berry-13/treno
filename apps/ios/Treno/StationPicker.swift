@@ -1,8 +1,58 @@
 import MapKit
 import SwiftUI
 
-/// Station chooser: favorites and frequently-used stations first, full-text
-/// search, and an Apple Maps view for picking by geography instead of name.
+// MARK: - local station search
+
+/// Instant ranked search over the cached station catalog: word prefixes
+/// ("mil cen" → Milano Centrale), word initials ("mc"), or substring, with
+/// busier stations first. No round-trip per keystroke.
+struct StationSearchIndex {
+    private struct Entry {
+        let station: StationLite
+        let folded: String
+        let words: [String]
+        let initials: String
+    }
+    private let entries: [Entry]
+
+    init(stations: [StationLite]) {
+        entries = stations.map { st in
+            let folded = Self.fold(st.name)
+            let words = folded.split(whereSeparator: \.isWhitespace).map(String.init)
+            let initials = words.compactMap(\.first).map(String.init).joined()
+            return Entry(station: st, folded: folded, words: words, initials: initials)
+        }
+    }
+
+    static func fold(_ s: String) -> String {
+        s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+    }
+
+    func search(_ rawQuery: String, limit: Int = 20) -> [StationLite] {
+        let tokens = Self.fold(rawQuery).split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !tokens.isEmpty else { return [] }
+        var scored: [(StationLite, Int)] = []
+        for e in entries {
+            var score = 0
+            var matched = true
+            for t in tokens {
+                if e.words.contains(where: { $0.hasPrefix(t) }) { score += 10 + t.count }
+                else if e.initials.hasPrefix(t) { score += 8 + t.count }
+                else if e.folded.contains(t) { score += 4 + t.count }
+                else { matched = false; break }
+            }
+            guard matched else { continue }
+            if e.folded.hasPrefix(tokens.joined(separator: " ")) { score += 6 }
+            scored.append((e.station, score * 1000 + min(e.station.depCount, 999)))
+        }
+        return scored.sorted { lhs, rhs in
+            lhs.1 != rhs.1 ? lhs.1 > rhs.1 : lhs.0.name.count < rhs.0.name.count
+        }.prefix(limit).map(\.0)
+    }
+}
+
+/// Station chooser: favorites and recently-used stations first, instant
+/// full-text search, and an Apple Maps view for picking by geography.
 struct StationPickerSheet: View {
     let currentId: String
     let onSelect: (Station) -> Void
@@ -10,10 +60,11 @@ struct StationPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var store = TripStore.shared
     @State private var query = ""
-    @State private var results: [Station] = []
+    @State private var remoteResults: [Station] = []
     @State private var searching = false
     @State private var searchFailed = false
     @State private var catalog: [StationLite] = []
+    @State private var index: StationSearchIndex?
     @State private var showMap = false
 
     static let suggested: [Station] = [
@@ -31,20 +82,35 @@ struct StationPickerSheet: View {
 
     private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
 
+    /// synchronous matches from the cached catalog — the primary path
+    private var localResults: [Station] {
+        guard trimmed.count >= 2, let index else { return [] }
+        return index.search(trimmed).map { Station(stopId: $0.stopId, name: $0.name) }
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 if trimmed.count >= 2 {
                     Section("Results") {
-                        ForEach(results) { st in stationRow(st) }
-                        if results.isEmpty {
-                            Text(searching ? "Searching…" : searchFailed ? "Search is unavailable. Please try again." : "No stations found").foregroundStyle(.tMuted)
+                        if !localResults.isEmpty {
+                            ForEach(localResults) { st in stationRow(st) }
+                        } else {
+                            ForEach(remoteResults) { st in stationRow(st) }
+                            if remoteResults.isEmpty {
+                                Text(searching ? "Searching…" : searchFailed ? "Search is unavailable. Please try again." : "No stations found").foregroundStyle(.tMuted)
+                            }
                         }
                     }
                 } else {
                     if !favoriteStations.isEmpty {
                         Section("Favorites") {
                             ForEach(favoriteStations) { st in stationRow(st) }
+                        }
+                    }
+                    if !recentStations.isEmpty {
+                        Section("Recent") {
+                            ForEach(recentStations) { st in stationRow(st) }
                         }
                     }
                     Section("Main stations") {
@@ -86,17 +152,20 @@ struct StationPickerSheet: View {
                 dismiss()
             }
         }
+        // server search only covers the gaps: stations outside the cached
+        // catalog (e.g. no service today). Local matches need no network.
         .task(id: query) {
             let text = trimmed
-            results = []
             searchFailed = false
-            guard text.count >= 2 else { searching = false; return }
+            guard text.count >= 2, localResults.isEmpty else { searching = false; return }
+            remoteResults = []
             searching = true
             do {
-                try await Task.sleep(for: .milliseconds(250))
+                try await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
                 let matches = try await APIClient.shared.stations(query: text)
                 guard !Task.isCancelled else { return }
-                results = matches
+                remoteResults = matches
                 searching = false
             } catch {
                 guard !Task.isCancelled else { return }
@@ -104,9 +173,18 @@ struct StationPickerSheet: View {
                 searchFailed = true
             }
         }
-        .task { catalog = (try? await StationCatalog.shared.stations()) ?? [] }
+        .task {
+            catalog = (try? await StationCatalog.shared.stations()) ?? []
+            index = StationSearchIndex(stations: catalog)
+        }
         .onAppear {
-            if ProcessInfo.processInfo.arguments.contains("--map") { showMap = true }
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("--map") { showMap = true }
+            // debug: `--picker-query "mil cen"` fills the search field so the
+            // local index results are capturable without synthetic typing
+            if let i = args.firstIndex(of: "--picker-query"), i + 1 < args.count {
+                query = args[i + 1]
+            }
         }
     }
 
@@ -118,7 +196,7 @@ struct StationPickerSheet: View {
             .compactMap { id in knownStations[id].map { Station(stopId: id, name: $0) } }
     }
 
-    private var frequentStations: [Station] {
+    private var recentStations: [Station] {
         store.frequentStations()
             .filter { !store.favorites.contains($0) }
             .compactMap { id in knownStations[id].map { Station(stopId: id, name: $0) } }

@@ -4,7 +4,7 @@ import SwiftUI
 /// different day/hour, and see the direct trains. Nothing is saved.
 struct TripSearchSheet: View {
     /// opens the train as a full page (sheet closes itself first)
-    let onOpenTrain: (Int) -> Void
+    let onOpenTrain: (TrainRef) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -16,6 +16,7 @@ struct TripSearchSheet: View {
     @State private var journeys: [JourneyRow] = []
     @State private var loading = false
     @State private var failed = false
+    private let refresh = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
 
     private var isNow: Bool { abs(when.timeIntervalSinceNow) < 120 }
 
@@ -69,7 +70,7 @@ struct TripSearchSheet: View {
                         ForEach(journeys) { j in
                             if let runId = j.runId {
                                 Button {
-                                    onOpenTrain(runId)
+                                    onOpenTrain(TrainRef(runId: runId, fromStopId: from?.stopId, toStopId: to?.stopId))
                                 } label: {
                                     journeyRow(j)
                                 }
@@ -92,9 +93,9 @@ struct TripSearchSheet: View {
             }
             .refreshable { await load() }
         }
-        .preferredColorScheme(.dark)
         .tint(.tPrimary)
-        .onChange(of: when) { _, _ in Task { await load() } }
+        .onChange(of: when) { _, _ in Task { await load(silent: true) } }
+        .onReceive(refresh) { _ in Task { await load(silent: true) } }
         .sheet(isPresented: $pickingFrom) {
             StationPickerSheet(currentId: from?.stopId ?? "") { st in
                 from = st
@@ -140,21 +141,18 @@ struct TripSearchSheet: View {
     }
 
     private func journeyRow(_ j: JourneyRow) -> some View {
-        let delay = j.depDelaySec ?? j.state?.operatorDelaySec
-        let est = j.depEpoch + Double(delay ?? 0) * 1000
+        let delay = j.departureDelay
+        let late = delay != nil && abs(delay!) >= 60
         return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     if let line = j.line {
                         Text(line)
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.tPrimary)
                     }
-                    Text(j.trainNumber)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tDim)
-                    if j.state?.status == "running" {
-                        Circle().fill(Color.tPrimary).frame(width: 5, height: 5)
+                    if j.state?.isFresh == true && j.state?.status == "running" {
+                        Circle().fill(Color.tGood).frame(width: 5, height: 5)
                     }
                 }
                 if let dest = j.finalDestinationName, dest != to?.name {
@@ -163,30 +161,32 @@ struct TripSearchSheet: View {
                         .foregroundStyle(.tMuted)
                         .lineLimit(1)
                 }
+                if let platform = Fmt.platform(j.platform) {
+                    PlatformChip(platform: platform)
+                }
             }
             Spacer(minLength: 8)
-            Text(Fmt.hhmm(est))
+            Text(Fmt.hhmm(j.expectedDeparture))
                 .font(.body.weight(.semibold).monospacedDigit())
-                .foregroundStyle(delay != nil && abs(delay!) >= 60 ? StatusUI.delayColor(delay) : Color.tFg)
+                .foregroundStyle(late ? StatusUI.delayColor(delay) : Color.tFg)
             Image(systemName: "arrow.right")
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.tDim)
-            Text(Fmt.hhmm(j.arrEpoch))
+            Text(Fmt.hhmm(j.expectedArrival))
                 .font(.body.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.tFg)
         }
     }
 
-    private func load() async {
+    /// silent reloads keep the list steady — no spinner, keep stale rows on error
+    private func load(silent: Bool = false) async {
         guard let f = from, let t = to else { return }
-        loading = true
-        failed = false
+        if !silent { loading = true; failed = false }
         do {
             journeys = try await APIClient.shared.journeys(from: f.stopId, to: t.stopId, at: isNow ? nil : when, limit: 8)
         } catch {
-            failed = true
-            journeys = []
+            if !silent { failed = true; journeys = [] }
         }
-        loading = false
+        if !silent { loading = false }
     }
 }

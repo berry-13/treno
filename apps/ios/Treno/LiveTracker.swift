@@ -7,7 +7,7 @@ extension TripActivityAttributes.ContentState {
             trainNumber: j.trainNumber,
             line: j.line,
             status: j.state?.status ?? "scheduled",
-            delaySec: j.depDelaySec ?? j.state?.operatorDelaySec,
+            delaySec: j.departureDelay,
             ourArrEpoch: j.expectedArrival,
             schedArrEpoch: j.arrEpoch,
             depEpoch: j.depEpoch,

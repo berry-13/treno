@@ -30,6 +30,13 @@ struct BoardResponse: Codable {
     let departures: [BoardDeparture]
 }
 
+extension BoardDeparture {
+    var effectiveDelay: Int? {
+        boardingDelay(depDelaySec: depDelaySec, actualDepEpoch: actualDepEpoch, state: state)
+    }
+    var isLive: Bool { state?.isFresh == true }
+}
+
 // MARK: - Departures
 
 struct StationBoardView: View {
@@ -48,21 +55,23 @@ struct StationBoardView: View {
         let nowMs = now.timeIntervalSince1970 * 1000
         return (board?.departures ?? []).filter { departure in
             if let actual = departure.actualDepEpoch { return actual >= nowMs }
-            let expected = departure.depEpoch + Double(departure.depDelaySec ?? departure.state?.operatorDelaySec ?? 0) * 1000
+            let expected = departure.depEpoch + Double(departure.effectiveDelay ?? 0) * 1000
             return expected >= nowMs - 60_000
         }
     }
+
+    private var anyLive: Bool { departures.contains { $0.isLive } }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 stationSelector
-                HStack {
+                HStack(spacing: 8) {
                     SectionHeading(title: "Departures")
                     if loading && board == nil { ProgressView() }
-                    else if let board, !failed {
-                        Text("Updated \(Fmt.hhmm(board.generatedAt))")
-                            .font(.caption).foregroundStyle(.tMuted)
+                    else if anyLive {
+                        Circle().fill(Color.tGood).frame(width: 7, height: 7)
+                        Text("Live").font(.caption.weight(.semibold)).foregroundStyle(.tMuted)
                     }
                 }
                 if failed {
@@ -78,7 +87,7 @@ struct StationBoardView: View {
                     VStack(spacing: 0) {
                         ForEach(Array(departures.enumerated()), id: \.element.id) { index, departure in
                             if let runId = departure.runId {
-                                NavigationLink(value: runId) { DepartureRow(departure: departure) }
+                                NavigationLink(value: TrainRef(runId: runId, fromStopId: stationId)) { DepartureRow(departure: departure) }
                                     .buttonStyle(.plain)
                             } else {
                                 DepartureRow(departure: departure)
@@ -156,11 +165,13 @@ struct StationBoardView: View {
 
 private struct DepartureRow: View {
     let departure: BoardDeparture
-    private var delay: Int? { departure.depDelaySec ?? departure.state?.operatorDelaySec }
+    private var delay: Int? { departure.effectiveDelay }
+    private var isLive: Bool { departure.isLive && delay != nil }
     private var cancelled: Bool { departure.state?.status == "cancelled" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let showSub = cancelled || (delay != nil && abs(delay!) >= 60)
+        return VStack(alignment: .leading, spacing: showSub ? 12 : 0) {
             HStack(alignment: .top, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(Fmt.hhmm(departure.depEpoch + Double(delay ?? 0) * 1000))
@@ -176,25 +187,20 @@ private struct DepartureRow: View {
                     HStack(spacing: 7) {
                         if let line = departure.line { TBadge(line, .tPrimary) }
                         else { Text("Train \(departure.trainNumber)").font(.footnote).foregroundStyle(.tMuted) }
+                        if isLive {
+                            Circle().fill(Color.tGood).frame(width: 6, height: 6)
+                        }
                     }
                 }
                 Spacer(minLength: 0)
-                if departure.runId != nil { Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary).padding(.top, 6) }
+                if let platform = Fmt.platform(departure.platform) { PlatformChip(platform: platform).padding(.top, 4) }
+                else if departure.runId != nil { Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary).padding(.top, 6) }
             }
-            if cancelled || delay != nil || Fmt.platform(departure.platform) != nil {
-                HStack {
-                    if cancelled || delay != nil {
-                        Label(cancelled ? "Cancelled" : Fmt.delayShort(delay),
-                              systemImage: cancelled ? "xmark.circle" : (delay ?? 0) >= 60 ? "clock.badge.exclamationmark" : "checkmark.circle")
-                            .foregroundStyle(cancelled ? Color.tDanger : StatusUI.delayColor(delay))
-                    }
-                    Spacer()
-                    if let platform = Fmt.platform(departure.platform) {
-                        Text("Platform \(platform)").foregroundStyle(.tMuted)
-                    }
-                }.font(.footnote)
+            if cancelled || (delay != nil && abs(delay!) >= 60) {
+                Text(cancelled ? "Cancelled" : Fmt.delayShort(delay))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(cancelled ? Color.tDanger : StatusUI.delayColor(delay))
             }
-
         }.padding(20).contentShape(Rectangle())
     }
 }

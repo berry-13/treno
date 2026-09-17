@@ -35,12 +35,12 @@ struct RootView: View {
                         UserDefaults.standard.set(name, forKey: "stationName")
                         boardPath = NavigationPath()
                         tab = .stations
-                    }, onOpenTrain: { runId in
+                    }, onOpenTrain: { ref in
                         tab = .home
-                        homePath.append(runId)
+                        homePath.append(ref)
                     })
-                    .navigationDestination(for: Int.self) { id in
-                        TrainDetailView(runId: id)
+                    .navigationDestination(for: TrainRef.self) { ref in
+                        TrainDetailView(ref: ref)
                     }
                     .navigationDestination(for: Trip.self) { trip in
                         TripDetailView(trip: trip)
@@ -50,8 +50,8 @@ struct RootView: View {
             Tab("Stations", systemImage: "tram.fill", value: .stations) {
                 NavigationStack(path: $boardPath) {
                     StationBoardView()
-                        .navigationDestination(for: Int.self) { id in
-                            TrainDetailView(runId: id)
+                        .navigationDestination(for: TrainRef.self) { ref in
+                            TrainDetailView(ref: ref)
                         }
                 }
             }
@@ -61,8 +61,8 @@ struct RootView: View {
                         .navigationDestination(for: Trip.self) { trip in
                             TripDetailView(trip: trip)
                         }
-                        .navigationDestination(for: Int.self) { id in
-                            TrainDetailView(runId: id)
+                        .navigationDestination(for: TrainRef.self) { ref in
+                            TrainDetailView(ref: ref)
                         }
                 }
             }
@@ -73,12 +73,30 @@ struct RootView: View {
             let args = ProcessInfo.processInfo.arguments
             // debug deep links:
             //   xcrun simctl launch <dev> com.treno.Treno --train <runId>
+            //   xcrun simctl launch <dev> com.treno.Treno --tab home|stations|trips
+            //   xcrun simctl launch <dev> com.treno.Treno --trip-detail (first saved trip)
             //   xcrun simctl launch <dev> com.treno.Treno --track <fromId>,<toId>
-            //   xcrun simctl launch <dev> com.treno.Treno --open-trip
-            //   xcrun simctl launch <dev> com.treno.Treno --picker | --map | --scroll
+            //   xcrun simctl launch <dev> com.treno.Treno --picker | --map | --find
             if let i = args.firstIndex(of: "--train"), i + 1 < args.count, let id = Int(args[i + 1]) {
+                var fromId: String?
+                var toId: String?
+                if let j = args.firstIndex(of: "--segment"), j + 1 < args.count {
+                    let parts = args[j + 1].split(separator: ",").map(String.init)
+                    if parts.count == 2 { fromId = parts[0]; toId = parts[1] }
+                }
                 tab = .home
-                homePath.append(id)
+                homePath.append(TrainRef(runId: id, fromStopId: fromId, toStopId: toId))
+            }
+            if let i = args.firstIndex(of: "--tab"), i + 1 < args.count {
+                switch args[i + 1] {
+                case "stations": tab = .stations
+                case "trips": tab = .trips
+                default: tab = .home
+                }
+            }
+            if args.contains("--trip-detail"), let first = TripStore.shared.trips.first {
+                tab = .trips
+                tripsPath.append(first)
             }
             if args.contains("--picker") || args.contains("--map") {
                 tab = .stations

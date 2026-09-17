@@ -2,6 +2,21 @@ import Foundation
 
 // MARK: - API models (matching packages/api responses)
 
+/// Navigation value for a train run, optionally scoped to the rider's own
+/// segment — the detail page then clocks where THEY board and get off instead
+/// of the train's first and last city.
+struct TrainRef: Hashable {
+    let runId: Int
+    var fromStopId: String?
+    var toStopId: String?
+
+    init(runId: Int, fromStopId: String? = nil, toStopId: String? = nil) {
+        self.runId = runId
+        self.fromStopId = fromStopId
+        self.toStopId = toStopId
+    }
+}
+
 struct TrainSummary: Codable, Identifiable, Hashable {
     let id: Int
     let trainNumber: String

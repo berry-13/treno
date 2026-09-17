@@ -86,6 +86,17 @@ struct TBadge: View {
     }
 }
 
+/// Bare platform number chip — the number is the whole message.
+struct PlatformChip: View {
+    let platform: String
+    var body: some View {
+        Text(platform).font(.footnote.weight(.semibold)).monospacedDigit()
+            .foregroundStyle(.tMuted)
+            .frame(minWidth: 30, minHeight: 26)
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.tBorder, lineWidth: 1))
+    }
+}
+
 struct SectionHeading: View {
     let title: String
     var body: some View {
@@ -182,8 +193,30 @@ extension Fmt {
     }
 }
 
+extension TrainState {
+    /// seconds since the run was last actually observed (nil = never)
+    var observedAgeSec: Int? {
+        latestObservedAt.map { max(0, Int((Date.now.timeIntervalSince1970 * 1000 - $0) / 1000)) }
+    }
+    /// live signal only counts while fresh — a run last seen hours ago says
+    /// nothing about the train in front of you now. 30 min keeps genuinely
+    /// late trains visible between observations while excluding day-old state.
+    var isFresh: Bool { observedAgeSec.map { $0 <= 1800 } ?? false }
+    var liveDelaySec: Int? { isFresh ? operatorDelaySec : nil }
+}
+
+/// Effective delay for boarding at a stop, fusing stop-level and run-level
+/// signals. Stop rows are seeded with delay 0 from the timetable, so before
+/// the train has actually departed the stop a zero there means "unknown", not
+/// "on time" — the run's fresh live delay is the real signal.
+func boardingDelay(depDelaySec: Int?, actualDepEpoch: Double?, state: TrainState?) -> Int? {
+    if actualDepEpoch != nil { return depDelaySec }
+    if let depDelaySec, depDelaySec != 0 { return depDelaySec }
+    return state?.liveDelaySec
+}
+
 extension JourneyRow {
-    var departureDelay: Int? { depDelaySec ?? state?.operatorDelaySec }
+    var departureDelay: Int? { boardingDelay(depDelaySec: depDelaySec, actualDepEpoch: actualDepEpoch, state: state) }
     var expectedDeparture: Double { actualDepEpoch ?? depEpoch + Double(departureDelay ?? 0) * 1000 }
     // A run's prediction is for its final destination. Intermediate journeys
     // use their own scheduled arrival with the observed delay instead.

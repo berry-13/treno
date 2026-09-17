@@ -36,7 +36,7 @@ final class JourneySummaries: ObservableObject {
 struct HomeView: View {
     let openStation: (String, String) -> Void
     /// opens a train as a full page from anywhere in Home (e.g. trip finder)
-    let onOpenTrain: (Int) -> Void
+    let onOpenTrain: (TrainRef) -> Void
     @StateObject private var store = TripStore.shared
     @StateObject private var summaries = JourneySummaries()
     @State private var showAddTrip = false
@@ -140,9 +140,9 @@ struct HomeView: View {
             }
         }
         .sheet(isPresented: $showStations) {
-            TripSearchSheet(onOpenTrain: { runId in
+            TripSearchSheet(onOpenTrain: { ref in
                 showStations = false
-                onOpenTrain(runId)
+                onOpenTrain(ref)
             })
         }
         .task { catalog = (try? await StationCatalog.shared.stations()) ?? [] }
@@ -166,34 +166,38 @@ struct TripCard: View {
     var failed = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(trip.name.isEmpty ? "Your next train" : trip.name)
-                    .font(.subheadline.weight(.medium)).foregroundStyle(.tMuted)
-                Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top) {
+                RouteEndpoints(from: trip.fromName, to: trip.toName)
+                Spacer(minLength: 12)
                 if let next {
                     TimelineView(.periodic(from: .now, by: 30)) { context in
                         Text(Fmt.departure(next.expectedDeparture, now: context.date))
-                            .font(.subheadline.weight(.semibold)).foregroundStyle(.tPrimary)
+                            .font(.title3.weight(.semibold)).foregroundStyle(.tPrimary)
                     }
                 }
             }
-            RouteEndpoints(from: trip.fromName, to: trip.toName)
             if let next {
-                HStack(alignment: .center) {
-                    time(next.expectedDeparture, title: "Departure")
-                    Spacer()
-                    Image(systemName: "arrow.right").font(.subheadline).foregroundStyle(.tertiary)
-                    Spacer()
-                    time(next.expectedArrival, title: "Arrival", alignment: .trailing)
+                HStack(alignment: .firstTextBaseline, spacing: 16) {
+                    Text(Fmt.hhmm(next.expectedDeparture)).font(.system(size: 40, weight: .semibold))
+                        .monospacedDigit().foregroundStyle(.tFg)
+                    Image(systemName: "arrow.right").font(.title3.weight(.medium)).foregroundStyle(.tertiary)
+                    Text(Fmt.hhmm(next.expectedArrival)).font(.system(size: 40, weight: .semibold))
+                        .monospacedDigit().foregroundStyle(.tFg)
+                    Spacer(minLength: 0)
+                }
+                if let delay = next.departureDelay, abs(delay) >= 60 {
+                    HStack(spacing: 16) {
+                        Text(Fmt.hhmm(next.depEpoch)).strikethrough()
+                        Image(systemName: "arrow.right").font(.caption2)
+                        Text(Fmt.hhmm(next.arrEpoch)).strikethrough()
+                    }.font(.footnote.monospacedDigit()).foregroundStyle(.tMuted)
                 }
                 HStack(spacing: 10) {
                     if let line = next.line { TBadge(line, .tPrimary) }
-                    if let platform = Fmt.platform(next.platform) {
-                        Text("Platform \(platform)").font(.footnote).foregroundStyle(.tMuted)
-                    }
+                    if let platform = Fmt.platform(next.platform) { PlatformChip(platform: platform) }
                     Spacer(minLength: 0)
-                    if let delay = next.departureDelay {
+                    if let delay = next.departureDelay, abs(delay) >= 60 {
                         Text(Fmt.delayShort(delay)).font(.footnote.weight(.medium))
                             .foregroundStyle(StatusUI.delayColor(delay))
                     }
@@ -206,13 +210,5 @@ struct TripCard: View {
         }
         .padding(24).background(Color.tCard, in: RoundedRectangle(cornerRadius: 28))
         .accessibilityHint("View trains for this journey")
-    }
-
-    private func time(_ value: Double, title: String, alignment: HorizontalAlignment = .leading) -> some View {
-        VStack(alignment: alignment, spacing: 6) {
-            Text(title).font(.footnote).foregroundStyle(.tMuted)
-            Text(Fmt.hhmm(value)).font(.system(.largeTitle, weight: .medium))
-                .monospacedDigit().foregroundStyle(.tFg)
-        }
     }
 }

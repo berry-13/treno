@@ -22,6 +22,7 @@
     "train": "tsx packages/collector/src/train.ts",
     "backtest": "tsx packages/collector/src/backtest.ts",
     "train:connections": "tsx packages/collector/src/train-connections.ts",
+    "backfill:monechi": "tsx packages/collector/src/backfill-monechi.ts",
     "retain": "tsx packages/storage/src/retention.ts",
     "ch:backfill": "tsx packages/storage/src/backfill-ch.ts",
     "typecheck": "tsc -p tsconfig.json"

@@ -115,13 +115,28 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
     const segId = segmentId(seg.from.stop_id, seg.to.stop_id);
     const tod = Math.round(((anchorEpoch % 86400_000) + 8640_000) % 86400_000 / 1000);
     const stats = statsForSegment(db, segId, tod);
-    const base = stats?.rt_p50 ?? seg.schedSec;
-    if (stats) withStats++;
+    // prior-only rows carry 2015 drift in rt_p50 (measured worse than the
+    // current schedule); their value is the spread, so the point estimate
+    // stays anchored on today's GTFS and they do not count as coverage —
+    // keeping statsCoverage's meaning identical to pre-backfill for the
+    // trained residual model
+    const base = stats?.origin === 'prior' && seg.schedSec != null ? seg.schedSec : (stats?.rt_p50 ?? seg.schedSec);
+    if (stats && stats.origin !== 'prior') withStats++;
     if (base == null) continue; // no schedule and no history for this pair
     const corridor = corridorDelta(db, segId) ?? 0;
     corridorAdjTotal += corridor;
     totalSec += Math.max(30, base + corridor);
-    const spread = stats ? Math.max(20, (stats.rt_p90! - stats.rt_p10!) / 2) : Math.max(45, 0.25 * (seg.schedSec ?? 180));
+    // spread: live quantiles when we have them; the no-history guess when we
+    // don't; prior-only segments take the MAX of guess and prior — 2015
+    // minute-quantized spreads undercover on their own (measured 66% vs 83%
+    // in an 80% band), so history can only widen uncertainty, never narrow it
+    const guessSpread = Math.max(45, 0.25 * (seg.schedSec ?? 180));
+    const priorSpread = stats?.origin === 'prior' && stats.rt_p90 != null && stats.rt_p10 != null
+      ? Math.max(20, (stats.rt_p90 - stats.rt_p10) / 2)
+      : null;
+    const spread = stats?.origin === 'live'
+      ? Math.max(20, (stats.rt_p90! - stats.rt_p10!) / 2)
+      : priorSpread != null ? Math.max(guessSpread, priorSpread) : guessSpread;
     spreadSq += spread * spread;
   }
   const independentP50 = anchorEpoch + totalSec * 1000;

@@ -27,6 +27,14 @@ export function ensureNormalizedTables(db: Db): void {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_segobs_run ON segment_observation(run_id, from_stop_id, to_stop_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_segobs_segment ON segment_observation(segment_id, entered_at)');
   db.exec(`CREATE TABLE IF NOT EXISTS segment_stats(segment_id TEXT NOT NULL, bucket TEXT NOT NULL, n INTEGER NOT NULL, rt_p10 REAL, rt_p50 REAL, rt_p90 REAL, dd_p50 REAL, dd_p90 REAL, updated_at INTEGER NOT NULL, PRIMARY KEY(segment_id, bucket))`);
+  // historical structural priors (never per-train features): kept separate so
+  // the live recompute in refreshSegmentStats can never clobber them and every
+  // row stays attributable to its dataset via `source`. rt_* are absolute
+  // dwell-adjusted runtimes (for capped blending against live rows); ex_p50 is
+  // the median excess over the 2015 schedule — the schedule-relative form used
+  // when the prior is a segment's only signal (immune to timetable drift).
+  db.exec(`CREATE TABLE IF NOT EXISTS segment_stats_prior(segment_id TEXT NOT NULL, bucket TEXT NOT NULL, n INTEGER NOT NULL, rt_p10 REAL, rt_p50 REAL, rt_p90 REAL, dd_p50 REAL, dd_p90 REAL, source TEXT NOT NULL, imported_at INTEGER NOT NULL, PRIMARY KEY(segment_id, bucket, source))`);
+  try { db.exec('ALTER TABLE segment_stats_prior ADD COLUMN ex_p50 REAL'); } catch { /* column exists */ }
   db.exec(`CREATE TABLE IF NOT EXISTS service_alerts(id INTEGER PRIMARY KEY, source TEXT NOT NULL, run_id INTEGER, stop_id TEXT, title TEXT, description TEXT, severity TEXT, start_epoch INTEGER, end_epoch INTEGER, payload_hash TEXT NOT NULL UNIQUE, raw_json TEXT, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE TABLE IF NOT EXISTS atm_stop_observations(id INTEGER PRIMARY KEY, stop_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, wait_messages TEXT, raw_hash TEXT, quality_flags TEXT)`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_atmobs_stop ON atm_stop_observations(stop_id, fetched_at)');

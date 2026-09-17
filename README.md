@@ -222,6 +222,51 @@ Next, in order:
   exceed 86400.
 - Portal-imported GTFS copies lose data (§8) — always load the original ZIP.
 
+## Historical backfill — Monechi 2015 priors
+
+`npm run backfill:monechi` seeds `segment_stats_prior` from the Monechi 2018
+dataset (national ViaggiaTreno per-train data, March-April 2015, regional
+services). It auto-downloads the 82 MB zip into `data/raw/monechi/`
+(gitignored; MD5-checked against the figshare record), maps 2015 station
+names onto GTFS `stop_id`s by normalized name + ≤3 km coordinate agreement
+(unmatchable segments are skipped), and writes per-segment runtime /
+delay-development quantiles attributed to `source='monechi-2015'`.
+
+License: **CC BY 4.0** — cite Monechi, Di Clemente, Gravino, Servedio,
+"Complex delay dynamics on railway networks from universal laws to realistic
+modelling", EPJ Data Science 7, 55 (2018), DOI 10.1140/epjds/s13688-018-0160-x.
+
+What the priors may and may not do (measured on 14 days of live traversals,
+see `packages/storage/src/segments.ts`): 2015 point estimates lose to both
+live stats and the current GTFS schedule in every stratum, so they **never
+shift `rt_p50`/`dd_p50`** — live rows always win outright, and prior-only
+segments anchor their point estimate on today's schedule. The priors
+contribute distribution *shape* only: the p10..p90 spread on segments
+without live coverage (widened for vintage, and never narrower than the
+no-history guess) plus stored delay-development stats for future models.
+`statsForSegment()` merges at read time; `refreshSegmentStats()` never
+touches the prior table, and re-running the import is idempotent.
+
+To enable on the server after a redeploy, run the import once inside the
+collector image (it downloads the raw data into the shared `treno-data`
+volume):
+
+```
+docker compose run --rm collector npx tsx packages/collector/src/backfill-monechi.ts
+```
+
+## Second live source — chuuchuu: investigated, not integrated
+
+chuuchuu.com was evaluated as a third realtime source (2026-09-17) and
+**rejected at the gate**: their public data offering is *historical* delay
+history/statistics only ("API & Data Packs"), access is a sales contact form
+with no published pricing or self-service keys, no public API docs exist,
+and their terms grant use of app content "for personal purposes only" —
+their realtime feed powers their own app via an undocumented internal API.
+Polling that internal API at collector scale would violate their terms. If
+they ever publish a documented live API, the provider pattern to follow is
+`packages/providers/vt.ts` (envelope + parse → `ingestSnapshot`).
+
 ## Configuration (env)
 
 ```

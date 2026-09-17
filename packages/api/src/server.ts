@@ -72,6 +72,13 @@ export function buildApp(db: Db) {
       scoredOutcomes: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM prediction_outcomes') ?? { n: 0 }).n,
       segmentObservations: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM segment_observation') ?? { n: 0 }).n,
       segmentsWithStats: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM segment_stats') ?? { n: 0 }).n,
+      // historical structural priors (Monechi 2015): same row semantics as
+      // segmentsWithStats (segment × bucket); priors never shift point
+      // estimates, they only carry distribution shape for segments without
+      // live coverage. segmentsEffective counts distinct segments served by
+      // either table.
+      segmentsWithPriors: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM segment_stats_prior') ?? { n: 0 }).n,
+      segmentsEffective: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM (SELECT segment_id FROM segment_stats UNION SELECT segment_id FROM segment_stats_prior)') ?? { n: 0 }).n,
       alerts: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM service_alerts') ?? { n: 0 }).n,
     };
     // source change rate over the last hour (§58 freshness evidence)

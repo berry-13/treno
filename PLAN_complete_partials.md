@@ -1,5 +1,8 @@
 # Execution plan — completing the partial goals
 
+> **STATUS 2026-09-19: EXECUTED in commit 96a7de6** (server rebuild+redeploy
+> still pending for live data). Outcomes per phase at the bottom of this file.
+
 Scope: the four items scored "partial" against GOAL.md — platform prediction (§52),
 crowding (§53), user-facing disruption/propagation intelligence (§50–51, §62 Corridor
 Health / Smart Alerts), and the ML refinements already on the backlog (hyperparameter
@@ -161,3 +164,29 @@ keep or revert, commit with the report numbers in the message.
 2. P2 trainer + backtest gate (offline, while P1 collects)
 3. P3 replay + gate, then surface
 4. P4 interleaved with any waiting time; sweep last.
+
+---
+
+## Execution log (2026-09-19, commit 96a7de6)
+
+- **P1 crowding** — schema/ingestion/CH mirror/API/iOS chip all landed.
+  `npm run backfill:crowding` replayed 157,647 MIA snapshots: **0 carried
+  average_crowding** — MIA is simply not returning the field for these
+  services right now (0/40 raw spot-checks confirm). The pipeline captures it
+  the moment it reappears; the iOS chip hides itself while absent.
+- **P2 platforms** — trainer + serving + nightly retrain landed. First run on
+  57,500 labelled rows: top-1 57.8% vs 85% gate, change-subset 16.6% vs 25%
+  gate → **correctly NOT deployed** (5 days of platform history; platforms
+  are genuinely volatile — baseline mode accuracy is only 56.8%). Retrains
+  nightly via train-loop; serving stays dark until the gate passes.
+- **P3 corridor + §51** — `/api/corridors`, per-train `riskNotice`, iOS amber
+  banner, and the point-in-time notice replay in `npm run backtest` all
+  landed. Local DB copy predates §51 features, so the replay printed "no rows
+  yet" — the server's first post-deploy backtest produces the real
+  precision/recall numbers and the ≥70% precision gate verdict.
+- **P4** — per-line target encoding (train-window, 20-row shrinkage, encoding
+  baked into the model json for serving) + 2nd-order ETA acceleration landed;
+  features 26→28; `npm run train` retrained cleanly on the local copy (val
+  MAE 166s, coverage 0.90 — unchanged, new features must earn their keep on
+  the server's fresher data). `npm run train:sweep` report-only grid landed;
+  run it on the server where the data lives.

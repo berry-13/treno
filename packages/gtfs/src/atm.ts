@@ -53,7 +53,17 @@ function clearAtmTables(db: Db): void {
   db.exec('DELETE FROM atm_calendar_dates');
 }
 
-/** Load an ATM GTFS zip (raw bytes) into the prefixed tables. */
+/** Load an ATM GTFS zip (raw bytes) into the prefixed tables.
+ *
+ * Memory-bounded (issue #2): the ATM feed is ~324 MB uncompressed
+ * (stop_times.txt alone is 286 MB / 2.7 M rows), so this NEVER holds the
+ * full feed as a JS string or a materialized row array. Members are
+ * decompressed selectively via the unzip filter (shapes.txt is never
+ * inflated), small files reuse the CSV table path, and stop_times.txt is
+ * scanned from its Uint8Array in chunks — one row string at a time —
+ * inserting as we go inside the transaction. Peak ≈ zip + largest member
+ * buffer instead of zip + every member + full string + all rows.
+ */
 export function loadAtmGtfsZip(db: Db, zipBytes: Uint8Array): { sha256: string; counts: Record<string, number> } {
   const sha256 = createHash('sha256').update(zipBytes).digest('hex');
   ensureAtmTables(db);
@@ -61,13 +71,15 @@ export function loadAtmGtfsZip(db: Db, zipBytes: Uint8Array): { sha256: string; 
   if (prev && prev.sha256 === sha256) {
     return { sha256, counts: JSON.parse(prev.counts_json) as Record<string, number> };
   }
-  const files = unzipSync(zipBytes);
+  const counts: Record<string, number> = {};
+  const SMALL_FILES = ['stops.txt', 'routes.txt', 'trips.txt', 'calendar.txt', 'calendar_dates.txt'];
+  // pass 1: small members only (a few MB each) — shapes.txt etc. stay deflated
+  const small = unzipSync(zipBytes, { filter: (f) => SMALL_FILES.includes(f.name) });
   const read = (name: string): string => {
-    const f = files[name];
+    const f = small[name];
     if (!f) throw new Error('atm gtfs zip missing file: ' + name);
     return strFromU8(f);
   };
-  const counts: Record<string, number> = {};
   db.exec('BEGIN');
   try {
     clearAtmTables(db);
@@ -98,19 +110,29 @@ export function loadAtmGtfsZip(db: Db, zipBytes: Uint8Array): { sha256: string; 
       }
       counts.trips = t.rows.length;
     }
-    { // stop_times
-      const t = table(read('stop_times.txt'));
-      const iTrip = t.indexOf('trip_id'), iSeq = t.indexOf('stop_sequence'), iStop = t.indexOf('stop_id'), iArr = t.indexOf('arrival_time'), iDep = t.indexOf('departure_time');
+    { // stop_times — streamed, never materialized as rows
+      const st = unzipSync(zipBytes, { filter: (f) => f.name === 'stop_times.txt' })['stop_times.txt'];
+      if (!st) throw new Error('atm gtfs zip missing file: stop_times.txt');
       const stmt = db.prepare('INSERT OR REPLACE INTO atm_stop_times VALUES(?,?,?,?,?)');
-      for (const r of t.rows) {
-        runStmt(stmt, [r[iTrip!] ?? '', Number(r[iSeq!] ?? '0'), r[iStop!] ?? '',
-          hmsToSec(iArr != null ? r[iArr] : undefined), hmsToSec(iDep != null ? r[iDep] : undefined)]);
-      }
-      counts.stop_times = t.rows.length;
+      let n = 0;
+      let skippedQuoted = 0;
+      let headerSeen = false;
+      streamCsvRows(st, (fields) => {
+        if (!headerSeen) { headerSeen = true; return; } // header row
+        // stop_times has no quoted fields by spec — a stray quote means a
+        // malformed line, skip it
+        if (fields.some((v) => v.includes('"'))) { skippedQuoted++; return; }
+        if (fields.length < 4) return;
+        const [tripId, arr, dep, stopId, seq] = fields;
+        runStmt(stmt, [tripId ?? '', Number(seq ?? '0'), stopId ?? '', hmsToSec(arr), hmsToSec(dep)]);
+        n++;
+      });
+      counts.stop_times = n;
+      if (skippedQuoted > 0) log.warn('atm gtfs: skipped malformed stop_times lines', { skippedQuoted });
     }
     { // calendar — ATM publishes calendar.txt (Mon..Sun flags over a window)
       // plus optional calendar_dates.txt exceptions
-      const cal = files['calendar.txt'];
+      const cal = small['calendar.txt'];
       if (cal) {
         const t = table(strFromU8(cal));
         const iSvc = t.indexOf('service_id'), iStart = t.indexOf('start_date'), iEnd = t.indexOf('end_date');
@@ -131,7 +153,7 @@ export function loadAtmGtfsZip(db: Db, zipBytes: Uint8Array): { sha256: string; 
           }
         }
       }
-      const cd = files['calendar_dates.txt'];
+      const cd = small['calendar_dates.txt'];
       if (cd) {
         const t = table(strFromU8(cd));
         const iSvc = t.indexOf('service_id'), iDate = t.indexOf('date'), iEx = t.indexOf('exception_type');
@@ -149,6 +171,63 @@ export function loadAtmGtfsZip(db: Db, zipBytes: Uint8Array): { sha256: string; 
   runStmt(db.prepare('INSERT INTO atm_feed_versions(sha256, loaded_at, counts_json) VALUES(?,?,?)'), [sha256, Date.now(), JSON.stringify(counts)]);
   log.info('atm gtfs: loaded', { sha256: sha256.slice(0, 12), ...counts });
   return { sha256, counts };
+}
+
+/** Incrementally parse CSV out of a UTF-8 Uint8Array with full quoted-field
+ * semantics ("" escapes) — the ATM feed quotes every field. Chunked decode
+ * with parser state carried across chunk boundaries, so no full-file JS
+ * string or row array is ever built (issue #2). Same field rules as
+ * csv.ts parseCsv, streaming instead of materializing. */
+function streamCsvRows(u8: Uint8Array, onRow: (fields: string[]) => void): void {
+  const dec = new TextDecoder('utf-8');
+  const CHUNK = 1 << 20; // 1 MB
+  let fields: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  let started = false; // any payload char seen on the current row
+  let first = true;
+  const emit = () => {
+    if (fields.length > 0 || field !== '' || started) {
+      fields.push(field);
+      if (first) {
+        first = false;
+        fields[0] = (fields[0] ?? '').replace(/^\uFEFF/, '');
+      }
+      onRow(fields);
+    }
+    fields = [];
+    field = '';
+    started = false;
+  };
+  for (let off = 0; off < u8.length; off += CHUNK) {
+    const slice = u8.subarray(off, Math.min(off + CHUNK, u8.length));
+    const text = dec.decode(slice, { stream: off + CHUNK < u8.length });
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i]!;
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; }
+          else inQuotes = false;
+        } else {
+          field += c;
+        }
+      } else if (c === '"') {
+        inQuotes = true;
+        started = true;
+      } else if (c === ',') {
+        fields.push(field);
+        field = '';
+      } else if (c === '\r') {
+        // ignore; \n terminates the row
+      } else if (c === '\n') {
+        emit();
+      } else {
+        field += c;
+        started = true;
+      }
+    }
+  }
+  emit(); // final row without trailing newline
 }
 
 /** Download (24h cache) + load. The feed URL is read from the environment
@@ -230,15 +309,21 @@ export function atmStopDepartures(db: Db, stopId: string, ymd: string, fromSec: 
 }
 
 // standalone: npx tsx packages/gtfs/src/atm.ts
+// (opens the DB directly — importing ./setup.ts here would create a cycle,
+// since setup.ts statically imports this module for ensureAtmTables)
 if (process.argv[1] && process.argv[1].endsWith('atm.ts')) {
   const { loadConfig } = await import('#core/config.ts');
-  const { openTrenoDb } = await import('./setup.ts');
+  const { openDb } = await import('#core/db.ts');
+  const { join } = await import('node:path');
+  const { mkdirSync } = await import('node:fs');
   const cfg = loadConfig();
-  const db = openTrenoDb(cfg);
-  const ok = await ensureAtmSchedule(cfg.dataDir, db, cfg.userAgent, cfg.dataDir + '/gtfs/atm_gtfs.zip');
+  mkdirSync(join(cfg.dataDir, 'db'), { recursive: true });
+  const db = openDb(join(cfg.dataDir, 'db', 'treno.db'));
+  ensureAtmTables(db);
+  const ok = await ensureAtmSchedule(cfg.dataDir, db, cfg.userAgent, join(cfg.dataDir, 'gtfs', 'atm_gtfs.zip'));
+  db.close();
   if (!ok) {
     log.error('atm gtfs: download failed');
     process.exit(1);
   }
-  db.close();
 }

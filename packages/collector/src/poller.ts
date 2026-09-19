@@ -189,7 +189,12 @@ export class Collector {
       this.lastPruneWatchesAt = now;
       pruneWatches(this.db);
     }
-    if (now - this.lastAtmGtfsAt > 24 * 3600_000) {
+    // ATM static-feed refresh (24h). Gated on ATM stop polling being
+    // configured — a rail-only deployment must never touch this feed: its
+    // stop_times.txt alone is ~286 MB and even a streaming parse has no
+    // business running where nothing consumes it (issue #2).
+    const atmStops = atmConfiguredStops();
+    if (atmStops.length > 0 && now - this.lastAtmGtfsAt > 24 * 3600_000) {
       this.lastAtmGtfsAt = now;
       void ensureAtmSchedule(this.cfg.dataDir, this.db, this.cfg.userAgent, join(this.cfg.dataDir, 'gtfs', 'atm_gtfs.zip'));
     }
@@ -223,7 +228,6 @@ export class Collector {
         log.warn('collector: segment stats refresh failed', { error: String(e) });
       }
     }
-    const atmStops = atmConfiguredStops();
     if (atmStops.length > 0 && now - this.lastAtmPoll > 60_000) {
       this.lastAtmPoll = now;
       for (const stopId of atmStops) {

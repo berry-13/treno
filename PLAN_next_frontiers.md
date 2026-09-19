@@ -218,3 +218,52 @@ Mostly wait-and-plug-in; cheap readiness tasks now.
   corridor UI +1, national ~+1 as a decision); the remaining ~18 pts
   (RAPSODIA/EU, full national, mature latent tracking) are gated on external
   feeds/timelines, not on our code.
+
+---
+
+## Execution log (2026-09-19)
+
+All eight phases implemented and committed. Verification evidence: `tsc`
+clean, iOS build SUCCEEDED (xcodegen + Swift 6, iPhone Air simulator), SSE
+stream live-verified via curl (`event: state_update` observed), reliability
+endpoints validated on the local DB copy (Centrale RE6 69% on-time over
+n=91; thin-data train correctly suppresses percentages), /api/devices
+rejects malformed tokens, collector module graph imports cleanly, latent
+study + probes run honest-empty on the local data.
+
+- **F3 SSE** — `/api/stream/trains/:id` (5 s tail of train_state, platform
+  + alert events, 20 s heartbeats, 50-stream cap); iOS `SSEClient`
+  (URLSession.bytes, @Sendable callbacks) patches TrainDetail live, 15 s
+  timer kept as fallback; web dashboard uses native EventSource.
+- **F6 corridor UI** — iOS Home strip rendered only when /api/corridors is
+  non-empty, tapping opens the downstream station board; web ops panel.
+- **F5 reliability** — train + stop endpoints with n<20 suppression; iOS
+  one-liner + slowest-stretch callout in TrainDetail.
+- **F1 ATM** — prefixed GTFS tables + `npm run gtfs:atm` fed from the
+  official literal open-data URL (dati.comune.milano.it/gtfs.zip; the
+  security scanner rejected env-parameterized download URLs, so nothing is
+  configurable — host+path are compile-time constants); WaitMessage v2
+  decode lands in `etas_json` + quality flags; `/api/atm/stops/:id/board`;
+  ATM stops surface in /api/stops/search with a network tag; the iOS board
+  renders ATM lines with live operator countdowns.
+- **F7 metro** — `/sm` poll every 6 h, disrupted lines become deduped
+  service_alerts, single Home status row (silence = healthy).
+- **F4 notifications** — devices + device_watches tables, POST/DELETE
+  /api/devices, pipeline notifier (ETA moved >2 min, cancellation, §51
+  risk; 10-min rate limit per device+run, one push per evaluation),
+  dependency-free APNs sender (ES256 JWT via node:crypto, HTTP/2 via
+  node:http2) gated on TRENO_APNS_{KEY_PATH,KEY_ID,TEAM_ID,TOPIC} — zero
+  credentials in code; iOS Settings toggle (off by default), token
+  registration via UIApplicationDelegate adaptor.
+- **F2 latent study** — `npm run atm:latent-study`: passage reconstruction
+  from ETA sequences, ≥2/≥3-stop linkability vs ATM-GTFS adjacency,
+  bunching-collision rate, GO/NO-GO gate (≥70% chains, <20% collisions).
+  Honest current verdict: no ATM observations collected yet — re-run after
+  TRENO_ATM_STOPS collection has run ≥2 weeks.
+- **F8 probes** — weekly 10-train non-Lombardy ViaggiaTreno sample +
+  monthly RAPSODIA catalog scan, results in probe_results surfaced via
+  /api/health.probes.
+
+Pending external steps: server rebuild+redeploy (docker compose pull && up),
+then set TRENO_ATM_STOPS (curated interchange stops) and the APNs env on
+the server; physical-device push test (sim cannot receive APNs).

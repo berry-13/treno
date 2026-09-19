@@ -126,6 +126,24 @@ struct TrainDetailView: View {
 
     // MARK: sections
 
+    /// §51 disruption-propagation warning — amber, expandable evidence
+    private func riskBanner(_ risk: RiskNotice) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text(risk.headline).font(.subheadline.weight(.semibold))
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .foregroundStyle(.tLate)
+            if let detailText = risk.detail {
+                Text(detailText).font(.footnote).foregroundStyle(.tMuted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.tLate.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+    }
+
     /// feed operators look like "TRENORD$:$FNM3" — show the company, not the route token
     private func cleanOperator(_ raw: String?) -> String {
         guard let raw, let first = raw.split(separator: "$").first.map(String.init), !first.isEmpty else { return "Regional train" }
@@ -166,6 +184,7 @@ struct TrainDetailView: View {
                             Text(Fmt.hhmm(dep)).font(.system(size: 44, weight: .semibold))
                                 .monospacedDigit().foregroundStyle(.tFg)
                             if let platform = times.platform { PlatformChip(platform: platform) }
+                            else if let top = boardStop?.platformPredicted?.first { PredictedPlatformChip(platform: top.n) }
                         }
                         Spacer()
                         VStack(alignment: .trailing, spacing: 6) {
@@ -193,6 +212,15 @@ struct TrainDetailView: View {
                 if let next = state?.nextStop?.name, !arrived {
                     Label("Next stop: \(next)", systemImage: "mappin.and.ellipse")
                         .font(.subheadline).foregroundStyle(.tMuted)
+                }
+                if let cr = detail.crowding, let pct = cr.crowdingPct, !arrived, !cancelled {
+                    Label(cr.crowdingLabel ?? (pct >= 80 ? "Very busy" : pct >= 55 ? "Busy" : nil) ?? "Busy",
+                          systemImage: pct >= 55 ? "person.2.fill" : "person.2")
+                        .font(.subheadline)
+                        .foregroundStyle(pct >= 80 ? .tLate : pct >= 55 ? .tPrimary : .tMuted)
+                }
+                if let risk = detail.riskNotice, !arrived, !cancelled {
+                    riskBanner(risk)
                 }
                 if let observed = state?.latestObservedAt {
                     TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -296,6 +324,8 @@ private struct StopTimelineRow: View {
                 if next && !yours { Text("Next stop").font(.footnote.weight(.medium)).foregroundStyle(.tPrimary) }
                 if let platform = Fmt.platform(stop.platformActual) {
                     PlatformChip(platform: platform)
+                } else if let top = stop.platformPredicted?.first, !passed {
+                    PredictedPlatformChip(platform: top.n)
                 }
             }.padding(.vertical, 16)
             Spacer(minLength: 4)

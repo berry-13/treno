@@ -73,6 +73,8 @@ export function extract(): TrainRow[] {
         alertsRun24h: f.alertsRun24h ?? null,
         alertsRoute24h: f.alertsRoute24h ?? null,
         precipMm: f.precipMm ?? null,
+        routeId: f.routeId ?? null,
+        etaAccelSec: f.etaAccelSec ?? null,
       },
       label: r.our_error_sec,
       operatorErrorSec: r.operator_error_sec,
@@ -215,6 +217,28 @@ function main() {
   const cut = Math.floor(rows.length * 0.8);
   const train = rows.slice(0, cut);
   const val = rows.slice(cut);
+  // P4 per-line target encoding: mean label per route_id from the TRAIN window
+  // only (≥20 rows to trust a line, else shrink to the global mean) — applied
+  // to both windows so validation stays honest
+  const routeSum = new Map<string, { s: number; n: number }>();
+  let gSum = 0;
+  for (const r of train) {
+    gSum += r.label;
+    const rid = r.features.routeId;
+    if (!rid) continue;
+    let e = routeSum.get(rid);
+    if (!e) routeSum.set(rid, e = { s: 0, n: 0 });
+    e.s += r.label;
+    e.n++;
+  }
+  const globalMean = gSum / train.length;
+  const SHRINK = 20;
+  const routeEncoding: Record<string, number> = {};
+  for (const [rid, e] of routeSum) {
+    routeEncoding[rid] = Math.round(((e.s + SHRINK * globalMean) / (e.n + SHRINK)) * 10) / 10;
+  }
+  const encOf = (rid: string | null | undefined): number => (rid != null ? routeEncoding[rid] ?? 0 : 0);
+  for (const r of rows) r.features.routeEncSec = encOf(r.features.routeId);
   const Xtr = train.map((r) => featureRow(r.features));
   const ytr = train.map((r) => r.label);
   const Xva = val.map((r) => featureRow(r.features));
@@ -347,6 +371,7 @@ function main() {
       model: Math.round((covModel / val.length) * 100) / 100,
     },
     ridge, pin10, pin90, conformal, stack,
+    routeEncoding,
     method: useGbm ? 'gbm' : 'ridge',
     gbm: useGbm ? gbm : undefined,
   };

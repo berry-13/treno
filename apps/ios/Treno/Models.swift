@@ -141,13 +141,36 @@ struct TrainDetail: Codable {
     let recentObservations: [ObservationRow]?
     let latestPrediction: LatestPrediction?
     let connections: [ConnectionOption]?
+    let crowding: Crowding?
+    let riskNotice: RiskNotice?
 
     enum CodingKeys: String, CodingKey {
-        case id, trainNumber, serviceDate, state, stops, recentObservations, latestPrediction, connections
+        case id, trainNumber, serviceDate, state, stops, recentObservations, latestPrediction, connections, crowding, riskNotice
         case operatorName = "operator"
         case originStop = "origin"
         case destinationStop = "destination"
     }
+}
+
+/// MIA-reported load level (0–100 + operator label); absent when unavailable.
+struct Crowding: Codable, Hashable {
+    let crowdingPct: Int?
+    let crowdingLabel: String?
+
+    enum CodingKeys: String, CodingKey {
+        case crowdingPct = "crowding_pct"
+        case crowdingLabel = "crowding_label"
+    }
+}
+
+/// §51 pre-emptive warning: preceding trains on the rider's route are already
+/// losing time — shown before the operator flags this train.
+struct RiskNotice: Codable, Hashable {
+    let headline: String
+    let detail: String?
+    let expectedDelaySec: Int?
+    let evidenceTrains: Int?
+    let segmentName: String?
 }
 
 struct LatestPrediction: Codable, Hashable {
@@ -196,6 +219,7 @@ struct DetailStop: Codable, Hashable, Identifiable {
     let arrDelaySec: Int?
     let depDelaySec: Int?
     let platformActual: String?
+    let platformPredicted: [PlatformPred]?
     let cancelled: Int?
 
     var id: String { stopId + "#" + String(stopSequence ?? 0) }
@@ -214,8 +238,15 @@ struct DetailStop: Codable, Hashable, Identifiable {
         case arrDelaySec = "arr_delay_sec"
         case depDelaySec = "dep_delay_sec"
         case platformActual = "platform_actual"
+        case platformPredicted = "platform_predicted"
         case cancelled
     }
+}
+
+/// §52: likely platform with probability — never shown as confirmed.
+struct PlatformPred: Codable, Hashable {
+    let n: String
+    let p: Double
 }
 
 struct ObservationRow: Codable, Hashable {

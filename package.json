@@ -23,6 +23,9 @@
     "backtest": "tsx packages/collector/src/backtest.ts",
     "train:connections": "tsx packages/collector/src/train-connections.ts",
     "backfill:monechi": "tsx packages/collector/src/backfill-monechi.ts",
+    "backfill:crowding": "tsx packages/collector/src/backfill-crowding.ts",
+    "train:platforms": "tsx packages/collector/src/train-platforms.ts",
+    "train:sweep": "tsx packages/collector/src/train-sweep.ts",
     "retain": "tsx packages/storage/src/retention.ts",
     "ch:backfill": "tsx packages/storage/src/backfill-ch.ts",
     "typecheck": "tsc -p tsconfig.json"

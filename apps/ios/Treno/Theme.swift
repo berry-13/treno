@@ -97,6 +97,20 @@ struct PlatformChip: View {
     }
 }
 
+/// §52: predicted platform — dashed border says "likely", never confirmed.
+struct PredictedPlatformChip: View {
+    let platform: String
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(platform).font(.footnote.weight(.semibold)).monospacedDigit()
+            Image(systemName: "questionmark").font(.system(size: 9)).foregroundStyle(.tMuted)
+        }
+        .foregroundStyle(.tMuted.opacity(0.75))
+        .frame(minWidth: 30, minHeight: 26)
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.tBorder, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+    }
+}
+
 struct SectionHeading: View {
     let title: String
     var body: some View {

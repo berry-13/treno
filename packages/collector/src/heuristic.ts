@@ -67,6 +67,8 @@ export interface HeuristicPrediction {
     holiday: 0 | 1;                        // service day is an Italian holiday
     upstreamStopMaxDelaySec: number | null;   // worst departure delay at the next stop, last 45 min
     upstreamStopDelayedCount: number | null;  // trains leaving the next stop ≥5 min late, last 45 min
+    routeId: string | null;                    // line identity (P4 target-encoding key)
+    etaAccelSec: number | null;                // 2nd-order operator-ETA movement (sec per 5min²)
   };
 }
 
@@ -179,6 +181,7 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
       const ev = eventFeatures(db, run.service_date, events.map((e) => e.stop_id));
       const nextStopId = events[anchorIdx >= 0 ? anchorIdx + 1 : 0]?.stop_id ?? null;
       const up = upstreamFeatures(db, nextStopId);
+      const vel = operatorEtaVelocity(db, run.id);
       return {
         anchorKind,
         anchorStopId: anchorIdx >= 0 ? events[anchorIdx]!.stop_id : null,
@@ -191,7 +194,7 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
         originDepDelaySec: ctx.originDepDelaySec,
         trainHistoryDelaySec: ctx.trainHistoryDelaySec,
         networkDelaySec: networkDelayNow(db),
-        operatorEtaDriftSec: operatorEtaDrift(db, run.id, state.destinationOperatorEta),
+        operatorEtaDriftSec: vel.driftSec,
         alertsRun24h: al.onRun,
         alertsRoute24h: al.onRoute,
         precipMm: gaugePrecipMm() ?? currentPrecipMm(),
@@ -201,6 +204,8 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
         holiday: ev.holiday,
         upstreamStopMaxDelaySec: up.upstreamStopMaxDelaySec,
         upstreamStopDelayedCount: up.upstreamStopDelayedCount,
+        routeId: run.route_id,
+        etaAccelSec: vel.accelSec,
       };
     })(),
   };
@@ -227,19 +232,29 @@ function contextFeatures(db: Db, run: RunRecord): { originDepDelaySec: number | 
   return { originDepDelaySec: origin != null ? Math.round(origin.d / 1000) : null, trainHistoryDelaySec };
 }
 
-/** how fast the operator's own ETA is moving (projected to 5 min) — a
- *  drifting ETA predicts more drift; position alone doesn't show it */
-function operatorEtaDrift(db: Db, runId: number, etaNow: number | null): number | null {
-  if (etaNow == null) return null;
+/** how fast the operator's own ETA is moving (projected to 5 min) and its
+ *  acceleration — a drifting ETA predicts more drift, and a turning one
+ *  predicts recovery/stall; position alone doesn't show either */
+function operatorEtaVelocity(db: Db, runId: number): { driftSec: number | null; accelSec: number | null } {
   const rows = getRows<{ operator_eta_epoch: number; generated_at: number }>(
     db,
-    'SELECT operator_eta_epoch, generated_at FROM predictions WHERE run_id=? AND operator_eta_epoch IS NOT NULL ORDER BY generated_at DESC LIMIT 2',
+    'SELECT operator_eta_epoch, generated_at FROM predictions WHERE run_id=? AND operator_eta_epoch IS NOT NULL ORDER BY generated_at DESC LIMIT 3',
     [runId],
   );
-  if (rows.length < 2) return null;
-  const dt = (rows[0]!.generated_at - rows[1]!.generated_at) / 1000;
-  if (dt < 30) return null;
-  return Math.round(((rows[0]!.operator_eta_epoch - rows[1]!.operator_eta_epoch) / 1000 / dt) * 300);
+  if (rows.length < 2) return { driftSec: null, accelSec: null };
+  const rate = (a: { operator_eta_epoch: number; generated_at: number }, b: { operator_eta_epoch: number; generated_at: number }): number | null => {
+    const dt = (a.generated_at - b.generated_at) / 1000;
+    if (dt < 30) return null;
+    return ((a.operator_eta_epoch - b.operator_eta_epoch) / 1000 / dt) * 300; // sec per 5 min
+  };
+  const driftSec = rate(rows[0]!, rows[1]!);
+  if (driftSec == null) return { driftSec: null, accelSec: null };
+  let accelSec: number | null = null;
+  if (rows.length >= 3) {
+    const d2 = rate(rows[1]!, rows[2]!);
+    if (d2 != null) accelSec = Math.round(driftSec - d2);
+  }
+  return { driftSec: Math.round(driftSec), accelSec };
 }
 
 function alertFeatures(db: Db, run: RunRecord): { onRun: number; onRoute: number } {

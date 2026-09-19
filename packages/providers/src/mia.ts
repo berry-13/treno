@@ -141,6 +141,7 @@ export function parseMiaTrain(raw: string): ProviderTrainSnapshot | null {
     observedAt,
     cancelled: train.suppression_type != null ? true : (stops.some((x) => x.cancelled === true) ? true : null),
     crowding: num(train.average_crowding),
+    crowdingLabel: str(train.average_crowding_label),
     alerts: Array.isArray(train.alerts) ? train.alerts : [],
     stops,
   };
@@ -153,7 +154,7 @@ function schedEpochToSec(epoch: number, serviceDate: string): number {
 
 export function miaRelevantHash(s: ProviderTrainSnapshot): string {
   const rel = {
-    d: s.delaySeconds, st: s.status, loc: s.lastLocationId, obs: s.observedAt,
+    d: s.delaySeconds, st: s.status, loc: s.lastLocationId, obs: s.observedAt, cr: s.crowding,
     stops: s.stops.map((x) => [x.stopId, x.opPredArrEpoch, x.opPredDepEpoch, x.actualArrEpoch, x.actualDepEpoch, x.platform, x.cancelled, x.arrDelaySec, x.depDelaySec]),
   };
   return createHash('sha256').update(JSON.stringify(rel)).digest('hex');

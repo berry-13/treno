@@ -64,12 +64,77 @@ function main() {
   buckets.forEach((c, i) => {
     lines.push('| ' + names[i] + ' | ' + fmt(c.heur) + ' | ' + fmt(c.op) + ' | ' + c.mods.map(fmt).join(' | ') + ' |');
   });
+
+  // §51 risk-notice replay: point-in-time replay of the pre-emptive warning
+  // (fired when ≥2 upstream trains were ≥5 min late AND our p50 was ≥60s
+  // late) against what actually happened — the honest-claims gate before the
+  // banner ships visibly. Features come straight from recorded features_json,
+  // so no hindsight leaks in.
+  lines.push('', '## risk-notice replay (§51)', '');
+  try {
+    const replay = replayRiskNotices();
+    if (replay.rowsWithUpstream > 0) {
+      lines.push(
+        '- rows with §51 features: ' + replay.rowsWithUpstream,
+        '- notices fired: ' + replay.fired,
+        '- precision (actual delay ≥1 min): ' + (replay.fired > 0 ? Math.round((replay.corroborated / replay.fired) * 100) + '%' : '—'),
+        '- recall on ≥2 min late arrivals: ' + (replay.actuallyLate > 0 ? Math.round((replay.caught / replay.actuallyLate) * 100) + '%' : '—'),
+        '',
+        replay.fired > 0 && replay.corroborated / replay.fired >= 0.7
+          ? 'gate PASS (≥70% precision) — banner may ship visible'
+          : 'gate FAIL (<70% precision or no firings yet) — keep the banner behind the model gate',
+      );
+    } else {
+      lines.push('- no rows carry §51 upstream features yet (they started recording 2026-09-18)');
+    }
+  } catch (e) {
+    lines.push('- replay unavailable: ' + String(e));
+  }
+
   console.log('\n' + lines.join('\n'));
   const reports = join(cfg.dataDir, 'reports');
   mkdirSync(reports, { recursive: true });
   const day = new Date().toISOString().slice(0, 10);
   writeFileSync(join(reports, 'backtest-' + day + '.md'), lines.join('\n') + '\n');
   log.info('backtest: report written', { file: 'data/reports/backtest-' + day + '.md' });
+}
+
+interface ReplayRow {
+  features: { upstreamStopDelayedCount?: number | null };
+  ourP50: number;
+  schedArr: number | null;
+  actualDelaySec: number; // actual arrival − schedule
+}
+
+/** Notice rule replayed on scored rows. Mirrors the API's riskNotice trigger. */
+export function replayRiskNotices(): { rowsWithUpstream: number; fired: number; corroborated: number; actuallyLate: number; caught: number } {
+  const db = openTrenoDb(loadConfig());
+  const rows = db.prepare(
+    `SELECT p.our_p50, p.sched_arr_epoch, p.features_json, o.our_error_sec
+     FROM predictions p JOIN prediction_outcomes o ON o.prediction_id = p.id
+     WHERE p.features_json IS NOT NULL AND p.our_p50 IS NOT NULL AND o.our_error_sec IS NOT NULL
+       AND p.sched_arr_epoch IS NOT NULL`,
+  ).all() as Array<{ our_p50: number; sched_arr_epoch: number; features_json: string; our_error_sec: number }>;
+  db.close();
+  let rowsWithUpstream = 0, fired = 0, corroborated = 0, actuallyLate = 0, caught = 0;
+  for (const r of rows) {
+    let f: { upstreamStopDelayedCount?: number | null };
+    try { f = JSON.parse(r.features_json) as { upstreamStopDelayedCount?: number | null }; } catch { continue; }
+    if (f.upstreamStopDelayedCount == null) continue;
+    rowsWithUpstream++;
+    const actualDelaySec = Math.round((r.our_p50 + r.our_error_sec * 1000 - r.sched_arr_epoch) / 1000);
+    const ourDelaySec = Math.round((r.our_p50 - r.sched_arr_epoch) / 1000);
+    const wouldFire = f.upstreamStopDelayedCount >= 2 && ourDelaySec >= 60;
+    if (actualDelaySec >= 120) {
+      actuallyLate++;
+      if (wouldFire) caught++;
+    }
+    if (wouldFire) {
+      fired++;
+      if (actualDelaySec >= 60) corroborated++;
+    }
+  }
+  return { rowsWithUpstream, fired, corroborated, actuallyLate, caught };
 }
 void featureRow;
 if (process.argv[1] && process.argv[1].endsWith('backtest.ts')) main();

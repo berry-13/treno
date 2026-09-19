@@ -24,13 +24,16 @@ export interface ObservationArgs {
   status: string | null;
   rawHash: string | null;
   qualityFlags?: string[] | null; // §45: OUT_OF_ORDER, DELAY_JUMP, ...
+  crowdingPct?: number | null;    // §53: MIA average_crowding (0..100)
+  crowdingLabel?: string | null;
 }
 
 export function insertObservation(db: Db, a: ObservationArgs): void {
   runStmt(
-    db.prepare('INSERT INTO train_observations(run_id, ts, source, observed_at, delay_seconds, location_id, location_name, location_kind, status, raw_hash, quality_flags) VALUES(?,?,?,?,?,?,?,?,?,?,?)'),
+    db.prepare('INSERT INTO train_observations(run_id, ts, source, observed_at, delay_seconds, location_id, location_name, location_kind, status, raw_hash, quality_flags, crowding_pct, crowding_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'),
     [a.runId, a.ts, a.source, a.observedAt, a.delaySeconds, a.locationId, a.locationName, a.locationKind, a.status, a.rawHash,
-     a.qualityFlags && a.qualityFlags.length > 0 ? JSON.stringify(a.qualityFlags) : null],
+     a.qualityFlags && a.qualityFlags.length > 0 ? JSON.stringify(a.qualityFlags) : null,
+     a.crowdingPct ?? null, a.crowdingLabel ?? null],
   );
   ch.queue('train_observations', {
     ts: new Date(a.ts), run_id: a.runId, source: a.source,
@@ -38,6 +41,7 @@ export function insertObservation(db: Db, a: ObservationArgs): void {
     location_id: a.locationId, location_name: a.locationName,
     status: a.status,
     quality_flags: a.qualityFlags && a.qualityFlags.length > 0 ? JSON.stringify(a.qualityFlags) : null,
+    crowding_pct: a.crowdingPct ?? null, crowding_label: a.crowdingLabel ?? null,
   });
 }
 

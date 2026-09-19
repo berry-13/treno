@@ -22,6 +22,7 @@ import { searchStops, stopById, stopDepartures, type StopDeparture } from '#gtfs
 import { providerHealth } from '#storage/observations.ts';
 import { segmentStatsTable, corridorDelta, segmentId as segId } from '#storage/segments.ts';
 import { connectionOptions } from '#collector/heuristic.ts';
+import { predictPlatforms } from '#collector/train-platforms.ts';
 import { secondsIntoServiceDay, bareTrainNumber } from '#collector/discover.ts';
 import { romeYmd, romeWallToEpoch, ymdPlusDays } from '#core/time.ts';
 import { journeysFor } from './journeys.ts';
@@ -109,9 +110,31 @@ export function buildApp(db: Db) {
     if (!run || !Number.isFinite(run.id)) return c.json({ error: 'not found' }, 404);
     const base = runWithState(db, 'r.id=?', [run.id], 1)[0];
     if (!base) return c.json({ error: 'not found' }, 404);
-    const stops = getRows(db,
-      'SELECT e.stop_id, g.stop_name, e.stop_sequence, e.sched_arr_epoch, e.sched_dep_epoch, e.op_pred_arr_epoch, e.op_pred_dep_epoch, e.actual_arr_epoch, e.actual_dep_epoch, e.arr_delay_sec, e.dep_delay_sec, e.platform_actual, e.cancelled FROM train_stop_events e LEFT JOIN gtfs_stops g ON g.stop_id = e.stop_id WHERE e.run_id=? ORDER BY e.stop_sequence ASC',
+    interface StopApiRow {
+      stop_id: string; stop_name: string | null; stop_sequence: number | null;
+      sched_arr_epoch: number | null; sched_dep_epoch: number | null;
+      op_pred_arr_epoch: number | null; op_pred_dep_epoch: number | null;
+      actual_arr_epoch: number | null; actual_dep_epoch: number | null;
+      arr_delay_sec: number | null; dep_delay_sec: number | null;
+      platform_actual: string | null; platform_is_actual: number | null; cancelled: number | null;
+      platform_predicted?: Array<{ n: string; p: number }> | null;
+    }
+    const stops = getRows<StopApiRow>(db,
+      'SELECT e.stop_id, g.stop_name, e.stop_sequence, e.sched_arr_epoch, e.sched_dep_epoch, e.op_pred_arr_epoch, e.op_pred_dep_epoch, e.actual_arr_epoch, e.actual_dep_epoch, e.arr_delay_sec, e.dep_delay_sec, e.platform_actual, e.platform_is_actual, e.cancelled FROM train_stop_events e LEFT JOIN gtfs_stops g ON g.stop_id = e.stop_id WHERE e.run_id=? ORDER BY e.stop_sequence ASC',
       [run.id]);
+    // §52 platform prediction: for stops without a confirmed platform yet,
+    // attach the top likely platforms (model file only exists past its gate)
+    const routeId = getRow<{ route_id: string | null }>(db, 'SELECT route_id FROM train_runs WHERE id=?', [run.id])?.route_id ?? null;
+    let prevActualPlatform: string | null = null;
+    for (const s of stops) {
+      const confirmed = s.platform_actual != null && s.platform_is_actual === 1;
+      if (confirmed) { prevActualPlatform = s.platform_actual; continue; }
+      if (s.cancelled !== 1 && s.actual_arr_epoch == null && s.actual_dep_epoch == null) {
+        s.platform_predicted = predictPlatforms({
+          stopId: s.stop_id, routeId, depEpochMs: s.sched_dep_epoch, prevPlatform: prevActualPlatform,
+        });
+      }
+    }
     const observations = getRows(db,
       'SELECT ts, source, observed_at, delay_seconds, location_id, location_name, location_kind, status, quality_flags FROM train_observations WHERE run_id=? ORDER BY ts DESC LIMIT 50',
       [run.id]);
@@ -128,7 +151,55 @@ export function buildApp(db: Db) {
         st.trainNumber ?? null,
       ) as unknown[];
     }
-    return c.json({ ...base, stops, recentObservations: observations, latestPrediction: latestPrediction ?? null, connections });
+    // §53 crowding: latest MIA-reported load level for this run
+    const crowding = getRow<{ crowding_pct: number; crowding_label: string | null }>(
+      db,
+      "SELECT crowding_pct, crowding_label FROM train_observations WHERE run_id=? AND source='mia' AND crowding_pct IS NOT NULL ORDER BY ts DESC LIMIT 1",
+      [run.id],
+    );
+    // §51 pre-emptive risk notice: preceding trains on this run's next
+    // segments are already losing time while the operator still shows this
+    // train on time — surfaced before the operator flags it
+    let riskNotice: { headline: string; detail: string | null; expectedDelaySec: number | null; evidenceTrains: number | null; segmentName: string | null } | null = null;
+    const stState = base.state as { status?: string; schedArrEpoch?: number | null; ourEstimate?: { p50: number } | null } | null;
+    if (stState && stState.status !== 'arrived' && stState.status !== 'cancelled' && stops.length >= 2) {
+      const firstUpcoming = stops.findIndex((s) => s.actual_arr_epoch == null && s.actual_dep_epoch == null && s.cancelled !== 1);
+      if (firstUpcoming >= 0) {
+        const since20 = Date.now() - 20 * 60_000;
+        let evidence = 0;
+        let worst: { segId: string; delta: number } | null = null;
+        for (let i = Math.max(0, firstUpcoming - 1); i + 1 < stops.length && i < firstUpcoming + 3; i++) {
+          const a = stops[i]!;
+          const b = stops[i + 1]!;
+          const deltas = getRows<{ delay_delta_sec: number }>(
+            db,
+            'SELECT delay_delta_sec FROM segment_observation WHERE segment_id=? AND entered_at >= ? AND delay_delta_sec > 90',
+            [a.stop_id + '>' + b.stop_id, since20],
+          );
+          evidence += deltas.length;
+          const mx = deltas.reduce((m, r) => Math.max(m, r.delay_delta_sec), 0);
+          if (deltas.length > 0 && (!worst || mx > worst.delta)) worst = { segId: a.stop_id + '>' + b.stop_id, delta: mx };
+        }
+        const expectedDelaySec = stState.ourEstimate && stState.schedArrEpoch != null
+          ? Math.round((stState.ourEstimate.p50 - stState.schedArrEpoch) / 1000)
+          : null;
+        if (evidence >= 2 && (expectedDelaySec ?? 0) >= 60) {
+          const names = worst ? worst.segId.split('>').map((sid) => {
+            const r = getRow<{ stop_name: string }>(db, 'SELECT stop_name FROM gtfs_stops WHERE stop_id=?', [sid]);
+            return r?.stop_name ?? sid;
+          }) : null;
+          const segName = names != null && names.length === 2 ? names.join(' → ') : null;
+          riskNotice = {
+            headline: 'Delays building ahead of this train',
+            detail: evidence + (evidence === 1 ? ' train is' : ' trains are') + ' already losing time' + (segName != null ? ' between ' + segName : '') + '.',
+            expectedDelaySec,
+            evidenceTrains: evidence,
+            segmentName: segName,
+          };
+        }
+      }
+    }
+    return c.json({ ...base, stops, recentObservations: observations, latestPrediction: latestPrediction ?? null, connections, crowding: crowding ?? null, riskNotice });
   });
 
   app.get('/api/segments', (c) => {
@@ -144,6 +215,39 @@ export function buildApp(db: Db) {
     const stats = getRow(db, 'SELECT segment_id, bucket, n, rt_p10, rt_p50, rt_p90, dd_p50, dd_p90 FROM segment_stats WHERE segment_id=? ORDER BY CASE bucket WHEN \'all\' THEN 0 ELSE 1 END LIMIT 1', [id]);
     const live = corridorDelta(db, id);
     return c.json({ segmentId: id, stats: stats ?? null, liveDeltaSec: live });
+  });
+
+  // §62 corridor health: segments traversed in the last hour, ordered by how
+  // far the last few trains' delay delta deviates from 0
+  app.get('/api/corridors', (c) => {
+    const limit = Math.min(Number(c.req.query('limit') ?? 20), 100);
+    const since = Date.now() - 3600_000;
+    const rows = getRows<{ segment_id: string; n: number; deltas: string }>(
+      db,
+      `SELECT segment_id, COUNT(*) AS n, GROUP_CONCAT(delay_delta_sec) AS deltas
+       FROM segment_observation WHERE entered_at >= ? AND delay_delta_sec IS NOT NULL
+       GROUP BY segment_id`,
+      [since],
+    );
+    const out = rows.map((r) => {
+      const ds = r.deltas.split(',').map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+      const median = ds[Math.floor(ds.length / 2)] ?? 0;
+      const [f, t] = r.segment_id.split('>');
+      const nf = getRow<{ stop_name: string }>(db, 'SELECT stop_name FROM gtfs_stops WHERE stop_id=?', [f ?? '']);
+      const nt = getRow<{ stop_name: string }>(db, 'SELECT stop_name FROM gtfs_stops WHERE stop_id=?', [t ?? '']);
+      return {
+        segmentId: r.segment_id,
+        fromName: nf?.stop_name ?? f,
+        toName: nt?.stop_name ?? t,
+        traversals: r.n,
+        medianDelayDeltaSec: median,
+        worstDelayDeltaSec: ds[ds.length - 1] ?? null,
+      };
+    })
+      .filter((r) => Math.abs(r.medianDelayDeltaSec) >= 60 || (r.worstDelayDeltaSec ?? 0) >= 180)
+      .sort((a, b) => Math.abs(b.medianDelayDeltaSec) - Math.abs(a.medianDelayDeltaSec))
+      .slice(0, limit);
+    return c.json({ generatedAt: Date.now(), corridors: out });
   });
 
   app.get('/api/alerts', (c) => {

@@ -12,7 +12,7 @@ import { ensureRun, mapSourceKey, resolveRun, type RunRecord } from '#storage/ru
 import { fillPredictionOutcomes, insertObservation, insertServiceAlert, recordPrediction, saveState, upsertStopEvent } from '#storage/observations.ts';
 import { deriveSegmentObservations } from '#storage/segments.ts';
 import { predictHeuristic, recoveryPrediction, HEURISTIC_MODEL_VERSION } from './heuristic.ts';
-import { applyResidual, getResidualModel, type FeatureInput } from './model.ts';
+import { applyResidual, getResidualModel, routeEncodingFor, type FeatureInput } from './model.ts';
 import type { ProviderStopEvent, ProviderTrainSnapshot } from '#providers/types.ts';
 import type { SnapshotInfo } from '#storage/rawStore.ts';
 
@@ -78,6 +78,8 @@ export function ingestSnapshot(db: Db, s: ProviderTrainSnapshot, meta: IngestMet
       status: s.status,
       rawHash: meta.snapshot.relevantHash,
       qualityFlags: flags,
+      crowdingPct: s.source === 'mia' ? s.crowding : null,
+      crowdingLabel: s.source === 'mia' ? s.crowdingLabel : null,
     });
   }
 
@@ -379,6 +381,9 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
       holiday: prediction.features.holiday,
       upstreamStopMaxDelaySec: prediction.features.upstreamStopMaxDelaySec,
       upstreamStopDelayedCount: prediction.features.upstreamStopDelayedCount,
+      routeId: prediction.features.routeId,
+      routeEncSec: residual ? routeEncodingFor(residual, run.route_id) : 0,
+      etaAccelSec: prediction.features.etaAccelSec,
     };
     const corrected = applyResidual(residual, fi, prediction.p10, prediction.p50, prediction.p90);
     prediction = {

@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 const STEPS = [
   ['npm', ['run', 'train']],
   ['npm', ['run', 'train:connections']],
+  ['npm', ['run', 'train:platforms']],
   ['npm', ['run', 'backtest']],
 ];
 

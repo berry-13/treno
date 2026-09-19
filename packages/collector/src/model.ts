@@ -43,6 +43,11 @@ export interface FeatureInput {
   holiday?: number | null;
   upstreamStopMaxDelaySec?: number | null;
   upstreamStopDelayedCount?: number | null;
+  // added 2026-09-19 (P4): per-line target encoding value (mean residual sec,
+  // out-of-fold at train time) and 2nd-order operator-ETA acceleration
+  routeId?: string | null;
+  routeEncSec?: number | null;
+  etaAccelSec?: number | null;
 }
 
 export const FEATURE_NAMES = [
@@ -74,6 +79,8 @@ export const FEATURE_NAMES = [
   'holiday',
   'upstreamMaxDelay',
   'upstreamDelayed',
+  'routeEnc',
+  'etaAccel',
 ] as const;
 
 const cap = (v: number, lim: number): number => Math.max(-lim, Math.min(lim, v));
@@ -114,6 +121,8 @@ export function featureRow(x: FeatureInput): number[] {
     x.holiday ?? 0,
     cap(x.upstreamStopMaxDelaySec ?? 0, 1800) / 600,
     Math.min(x.upstreamStopDelayedCount ?? 0, 10) / 5,
+    cap(x.routeEncSec ?? 0, 600) / 300,
+    cap(x.etaAccelSec ?? 0, 1200) / 600,
   ];
 }
 
@@ -147,6 +156,9 @@ export interface ResidualModel {
   method?: 'ridge' | 'gbm';
   gbm?: GBMForest;
   stack?: StopModel;
+  /** P4 per-line target encoding: mean residual (sec) per route_id from the
+   *  TRAIN window — serving looks the run's route up here (0 = unknown) */
+  routeEncoding?: Record<string, number>;
 }
 
 let cached: { file: string; mtime: number; model: ResidualModel | null } | null = null;
@@ -174,6 +186,12 @@ const dot = (a: number[], b: number[]): number => {
   for (let i = 0; i < a.length; i++) s += a[i]! * b[i]!;
   return s;
 };
+
+/** Serving-side lookup of the per-line encoding baked into a trained model. */
+export function routeEncodingFor(model: ResidualModel, routeId: string | null): number {
+  if (!routeId || !model.routeEncoding) return 0;
+  return model.routeEncoding[routeId] ?? 0;
+}
 
 export interface CorrectedPrediction {
   p10: number;

@@ -146,6 +146,7 @@ export function parseVtTrain(raw: string, ref: VtTrainRef): ProviderTrainSnapsho
     observedAt: epoch(t.oraUltimoRilevamento),
     cancelled: Array.isArray(t.fermateSoppresse) && t.fermateSoppresse.length > 0 ? true : null,
     crowding: null,
+    crowdingLabel: null,
     alerts: Array.isArray(t.compRitardo) ? t.compRitardo : [],
     stops,
   };

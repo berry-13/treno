@@ -107,3 +107,7 @@ CREATE TABLE IF NOT EXISTS source_snapshots (
   parser_version LowCardinality(String),
   error Nullable(String)
 ) ENGINE = MergeTree ORDER BY (fetched_at, source);
+
+-- crowding (GOAL.md §53), added 2026-09-19 — additive migration for existing installs
+ALTER TABLE train_observations ADD COLUMN IF NOT EXISTS crowding_pct Nullable(Int32);
+ALTER TABLE train_observations ADD COLUMN IF NOT EXISTS crowding_label Nullable(String);

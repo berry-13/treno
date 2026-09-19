@@ -41,6 +41,7 @@ export interface ProviderTrainSnapshot {
   observedAt: number | null;  // upstream-stated event time (epoch ms)
   cancelled: boolean | null;
   crowding: number | null;
+  crowdingLabel: string | null;
   alerts: unknown[];
   stops: ProviderStopEvent[];
 }

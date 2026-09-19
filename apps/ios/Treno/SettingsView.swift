@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("appearance") private var appearance = "system"
     @AppStorage("stationName") private var stationName = "Milano Centrale"
+    @AppStorage("notificationsOn") private var notificationsOn = false
 
     var body: some View {
         Form {
@@ -21,6 +22,10 @@ struct SettingsView: View {
                     Text("Light").tag("light")
                     Text("Dark").tag("dark")
                 }
+                Toggle("Delay notifications", isOn: $notificationsOn)
+                    .onChange(of: notificationsOn) { _, on in
+                        Task { await NotificationsController.shared.setOn(on) }
+                    }
                 LabeledContent("Last station", value: stationName)
             }
             Section {

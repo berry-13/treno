@@ -100,3 +100,44 @@ export async function politeFetch(url: string, opts: PoliteOptions): Promise<Fet
     }
   }
 }
+
+/** Binary variant of politeFetch for feed zips (same politeness contract).
+ * Callers must validate the URL themselves — see providers/atm.ts for the
+ * hostname-allowlist pattern. */
+export async function politeFetchBytes(url: string, opts: PoliteOptions): Promise<{ ok: boolean; status: number; bytes: Uint8Array | null; error: string | null }> {
+  const { source, userAgent } = opts;
+  const timeoutMs = opts.timeoutMs ?? 60000;
+  const retries = opts.retries ?? 1;
+  const minInterval = opts.minIntervalMs ?? 1000;
+  let attempt = 0;
+  for (;;) {
+    await gate(source, minInterval);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        signal: ctrl.signal,
+        redirect: 'follow',
+        headers: { accept: 'application/zip, */*', 'user-agent': userAgent, ...opts.extraHeaders },
+      });
+      clearTimeout(timer);
+      release(source);
+      if (res.status >= 500 && attempt < retries) {
+        attempt++;
+        await sleep(1000 * attempt * attempt);
+        continue;
+      }
+      if (!res.ok) return { ok: false, status: res.status, bytes: null, error: 'HTTP ' + String(res.status) };
+      return { ok: true, status: res.status, bytes: new Uint8Array(await res.arrayBuffer()), error: null };
+    } catch (e) {
+      clearTimeout(timer);
+      release(source);
+      if (attempt < retries) {
+        attempt++;
+        await sleep(1000 * attempt * attempt);
+        continue;
+      }
+      return { ok: false, status: 0, bytes: null, error: String(e) };
+    }
+  }
+}

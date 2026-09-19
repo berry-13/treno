@@ -16,6 +16,7 @@
   },
   "scripts": {
     "gtfs:load": "tsx packages/gtfs/src/cli.ts",
+    "gtfs:atm": "tsx packages/gtfs/src/atm.ts",
     "collector": "tsx packages/collector/src/index.ts",
     "api": "tsx packages/api/src/server.ts",
     "bench": "tsx packages/collector/src/bench.ts",
@@ -26,6 +27,7 @@
     "backfill:crowding": "tsx packages/collector/src/backfill-crowding.ts",
     "train:platforms": "tsx packages/collector/src/train-platforms.ts",
     "train:sweep": "tsx packages/collector/src/train-sweep.ts",
+    "atm:latent-study": "tsx packages/collector/src/atm-latent-study.ts",
     "retain": "tsx packages/storage/src/retention.ts",
     "ch:backfill": "tsx packages/storage/src/backfill-ch.ts",
     "typecheck": "tsc -p tsconfig.json"

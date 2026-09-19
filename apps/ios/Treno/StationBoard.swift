@@ -6,8 +6,32 @@ import SwiftUI
 struct Station: Codable, Hashable, Identifiable {
     let stopId: String
     let name: String
+    var network: String?
     var id: String { stopId }
-    enum CodingKeys: String, CodingKey { case stopId = "stop_id", name = "stop_name" }
+    enum CodingKeys: String, CodingKey { case stopId = "stop_id", name = "stop_name", network }
+    var isAtm: Bool { network == "atm" }
+}
+
+// MARK: - ATM board models (GET /api/atm/stops/:id/board) — the live values
+// are the operator's own quantized WaitMessages, not our estimates (GOAL §21)
+
+struct AtmBoardDeparture: Codable, Identifiable, Hashable {
+    let line: String?
+    let routeType: Int?
+    let destinationName: String?
+    let scheduledInSec: Int?
+    let liveEtaSec: Int?
+    let flag: String?
+    var id: String { (line ?? "?") + "@" + String(scheduledInSec ?? 0) + "@" + (destinationName ?? "") }
+}
+
+struct AtmBoardResponse: Codable {
+    struct StationRef: Codable { let stopId: String; let name: String }
+    let station: StationRef
+    let generatedAt: Double
+    let departures: [AtmBoardDeparture]
+    let liveLines: [AtmLiveLine]?
+    struct AtmLiveLine: Codable { let line: String; let etaSec: Int?; let flag: String? }
 }
 
 struct BoardDeparture: Codable, Identifiable, Hashable {
@@ -42,8 +66,10 @@ extension BoardDeparture {
 struct StationBoardView: View {
     @AppStorage("stationId") private var stationId = "S01700"
     @AppStorage("stationName") private var stationName = "Milano Centrale"
+    @AppStorage("stationNetwork") private var stationNetwork = "rail"
     @StateObject private var store = TripStore.shared
     @State private var board: BoardResponse?
+    @State private var atmBoard: AtmBoardResponse?
     @State private var failed = false
     @State private var loading = false
     @State private var requestID = UUID()
@@ -81,7 +107,7 @@ struct StationBoardView: View {
                             .buttonStyle(.bordered).frame(maxWidth: .infinity)
                     }
                 }
-                if board != nil && departures.isEmpty {
+                if board != nil && departures.isEmpty && atmBoard == nil {
                     ContentUnavailableView("No upcoming departures", systemImage: "tram", description: Text("Try another station or check back later."))
                 } else if !departures.isEmpty {
                     VStack(spacing: 0) {
@@ -96,6 +122,19 @@ struct StationBoardView: View {
                         }
                     }.background(Color.tCard, in: RoundedRectangle(cornerRadius: 22))
                 }
+                if let atm = atmBoard {
+                    let rows = atm.departures.filter { d in
+                        (d.liveEtaSec ?? d.scheduledInSec ?? 0) > -60
+                    }
+                    if !rows.isEmpty {
+                        VStack(spacing: 0) {
+                            ForEach(Array(rows.prefix(12).enumerated()), id: \.element.id) { index, departure in
+                                AtmDepartureRow(departure: departure)
+                                if index < min(rows.count, 12) - 1 { Divider().padding(.leading, 20) }
+                            }
+                        }.background(Color.tCard, in: RoundedRectangle(cornerRadius: 22))
+                    }
+                }
             }.padding(.horizontal, 20).padding(.bottom, 28)
         }
         .background { TrenoBackground() }
@@ -104,11 +143,13 @@ struct StationBoardView: View {
             StationPickerSheet(currentId: stationId) { station in
                 stationName = station.name
                 stationId = station.id
+                stationNetwork = station.network ?? "rail"
                 store.noteUse(station.id)
             }
         }
         .task(id: stationId) {
             board = nil
+            atmBoard = nil
             failed = false
             await load(stationId)
         }
@@ -151,6 +192,18 @@ struct StationBoardView: View {
         requestID = request
         loading = true
         defer { if requestID == request { loading = false } }
+        if stationNetwork == "atm" {
+            do {
+                let response = try await APIClient.shared.atmBoard(stopId: requestedId)
+                guard requestID == request, requestedId == stationId, !Task.isCancelled else { return }
+                atmBoard = response
+                failed = false
+            } catch {
+                guard requestID == request, requestedId == stationId, !Task.isCancelled else { return }
+                failed = true
+            }
+            return
+        }
         do {
             let response = try await APIClient.shared.stationBoard(stopId: requestedId)
             guard requestID == request, requestedId == stationId, !Task.isCancelled else { return }
@@ -160,6 +213,33 @@ struct StationBoardView: View {
             guard requestID == request, requestedId == stationId, !Task.isCancelled else { return }
             failed = true
         }
+    }
+}
+
+/// ATM tram/bus lines with live countdowns (operator WaitMessages)
+private struct AtmDepartureRow: View {
+    let departure: AtmBoardDeparture
+    var body: some View {
+        HStack(spacing: 14) {
+            Text(departure.line ?? "?")
+                .font(.body.weight(.semibold)).monospacedDigit()
+                .frame(minWidth: 36, minHeight: 28)
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.tBorder, lineWidth: 1))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(departure.destinationName ?? " ").font(.body.weight(.medium)).lineLimit(1)
+                if departure.flag != nil {
+                    Text("Recalculating").font(.footnote).foregroundStyle(.tMuted)
+                }
+            }
+            Spacer(minLength: 4)
+            if let eta = departure.liveEtaSec {
+                Text(eta <= 60 ? "Arriving" : "\(Int((Double(eta) / 60.0).rounded())) min")
+                    .font(.body.weight(.semibold)).foregroundStyle(.tPrimary)
+            } else if let sched = departure.scheduledInSec, sched >= 0 {
+                Text(sched <= 60 ? "Due" : "\(Int((Double(sched) / 60.0).rounded())) min")
+                    .font(.body).foregroundStyle(.tMuted)
+            }
+        }.padding(16)
     }
 }
 

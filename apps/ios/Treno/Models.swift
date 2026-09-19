@@ -136,7 +136,7 @@ struct TrainDetail: Codable {
     let operatorName: String?
     let originStop: String?
     let destinationStop: String?
-    let state: TrainState?
+    var state: TrainState?
     let stops: [DetailStop]?
     let recentObservations: [ObservationRow]?
     let latestPrediction: LatestPrediction?
@@ -171,6 +171,40 @@ struct RiskNotice: Codable, Hashable {
     let expectedDelaySec: Int?
     let evidenceTrains: Int?
     let segmentName: String?
+}
+
+/// §62 corridor health: a segment currently running slower than normal.
+struct CorridorRow: Codable, Hashable, Identifiable {
+    let segmentId: String
+    let fromName: String?
+    let toName: String?
+    let traversals: Int?
+    let medianDelayDeltaSec: Int?
+    let worstDelayDeltaSec: Int?
+
+    var id: String { segmentId }
+    var title: String { (fromName ?? "?") + " → " + (toName ?? "?") }
+}
+
+/// §84 reliability: 30-day behaviour of one train number.
+struct TrainReliability: Codable, Hashable {
+    struct SegHotspot: Codable, Hashable {
+        let fromName: String?
+        let toName: String?
+        let medianDelayDeltaSec: Int?
+        let n: Int?
+    }
+    let trainNumber: String
+    let days: Int?
+    let completedRuns: Int
+    let onTimePct: Double?
+    let late5Pct: Double?
+    let late10Pct: Double?
+    let cancelledPct: Double?
+    let medianDelaySec: Int?
+    let p90DelaySec: Int?
+    let worstSegment: SegHotspot?
+    let recoverySegment: SegHotspot?
 }
 
 struct LatestPrediction: Codable, Hashable {

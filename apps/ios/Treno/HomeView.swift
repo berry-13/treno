@@ -43,6 +43,8 @@ struct HomeView: View {
     @State private var showStations = false
     @State private var showSettings = false
     @State private var catalog: [StationLite] = []
+    @State private var corridors: [CorridorRow] = []
+    @State private var metroAlert: String?
     private let refresh = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     private var nextTrip: Trip? {
@@ -100,6 +102,33 @@ struct HomeView: View {
                     }
                 }
 
+                if let metro = metroAlert {
+                    HStack(spacing: 10) {
+                        Image(systemName: "m.fill").font(.footnote.weight(.semibold)).foregroundStyle(.tMuted)
+                        Text(metro).font(.footnote).foregroundStyle(.tMuted).lineLimit(2)
+                    }.padding(14)
+                }
+
+                if !corridors.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(corridors) { corridor in
+                            Button {
+                                let sid = corridor.segmentId.split(separator: ">").last.map(String.init) ?? ""
+                                openStation(sid, corridor.toName ?? sid)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.footnote).foregroundStyle(.tLate)
+                                    Text(corridor.title + " running " + Fmt.delayShort(corridor.medianDelayDeltaSec ?? 0) + " slower")
+                                        .font(.footnote).foregroundStyle(.tMuted)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }.padding(14)
+                            }.buttonStyle(.plain)
+                        }
+                    }.background(Color.tLate.opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
+                }
+
                 if !stations.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
                         SectionHeading(title: "Your stations")
@@ -154,8 +183,29 @@ struct HomeView: View {
             }
         }
         .task(id: store.trips) { await summaries.load(store.trips) }
-        .refreshable { await summaries.load(store.trips) }
-        .onReceive(refresh) { _ in Task { await summaries.load(store.trips) } }
+        .task { corridors = (try? await APIClient.shared.corridors()) ?? []; metroAlert = await loadMetroAlert() }
+        .refreshable {
+            await summaries.load(store.trips)
+            corridors = (try? await APIClient.shared.corridors()) ?? []
+            metroAlert = await loadMetroAlert()
+        }
+        .onReceive(refresh) { _ in
+            Task { await summaries.load(store.trips) }
+            Task { corridors = (try? await APIClient.shared.corridors()) ?? [] }
+            Task { metroAlert = await loadMetroAlert() }
+        }
+    }
+
+    /// §25: single status row when a metro line is disrupted; nothing when
+    /// all lines are regular (silence = healthy)
+    private func loadMetroAlert() async -> String? {
+        struct AlertRow: Decodable { let source: String?; let title: String? }
+        guard let url = URL(string: APIClient.shared.baseUrl + "/api/alerts") else { return nil }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let rows = try JSONDecoder().decode([AlertRow].self, from: data)
+            return rows.first { $0.source == "atm-sm" }?.title
+        } catch { return nil }
     }
 }
 

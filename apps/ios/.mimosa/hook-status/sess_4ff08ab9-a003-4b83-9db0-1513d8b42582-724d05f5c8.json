@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-09-17T22:15:34.588Z",
+  "sessionId": "sess_4ff08ab9-a003-4b83-9db0-1513d8b42582",
+  "event": "PostToolUse",
+  "toolName": "Edit",
+  "file": "/Users/berry/Documents/treno/packages/collector/src/model.ts",
+  "outcome": "inconclusive",
+  "coverage": "partial",
+  "findingCount": 0,
+  "durationMs": 2,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

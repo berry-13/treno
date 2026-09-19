@@ -38,6 +38,8 @@ export function ensureNormalizedTables(db: Db): void {
   db.exec(`CREATE TABLE IF NOT EXISTS service_alerts(id INTEGER PRIMARY KEY, source TEXT NOT NULL, run_id INTEGER, stop_id TEXT, title TEXT, description TEXT, severity TEXT, start_epoch INTEGER, end_epoch INTEGER, payload_hash TEXT NOT NULL UNIQUE, raw_json TEXT, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE TABLE IF NOT EXISTS atm_stop_observations(id INTEGER PRIMARY KEY, stop_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, wait_messages TEXT, raw_hash TEXT, quality_flags TEXT)`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_atmobs_stop ON atm_stop_observations(stop_id, fetched_at)');
+  // WaitMessage v2 (F1): decoded operator prediction + flags
+  try { db.exec('ALTER TABLE atm_stop_observations ADD COLUMN etas_json TEXT'); } catch { /* column exists */ }
   // exogenous calendar (strikes, stadium events, holidays) used for point-in-time
   // prediction features; kind: 'strike' | 'stadium' | 'holiday'. scope: 'network'
   // (rail/general strikes) or 'stations' with stations_csv set. Re-importable.
@@ -50,4 +52,8 @@ export function ensureNormalizedTables(db: Db): void {
   // observation time series preserves that evolution
   try { db.exec('ALTER TABLE train_observations ADD COLUMN crowding_pct INTEGER'); } catch { /* column exists */ }
   try { db.exec('ALTER TABLE train_observations ADD COLUMN crowding_label TEXT'); } catch { /* column exists */ }
+  // §61 notifications: device registry + per-run watch state (last-notified
+  // values implement the rate limits; a rule fires only when its value moved)
+  db.exec(`CREATE TABLE IF NOT EXISTS devices(token TEXT PRIMARY KEY, created_at INTEGER NOT NULL, last_seen_at INTEGER)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS device_watches(token TEXT NOT NULL, run_id INTEGER NOT NULL, eta_p50_notified INTEGER, cancelled_notified INTEGER DEFAULT 0, risk_notified INTEGER DEFAULT 0, last_notified_at INTEGER DEFAULT 0, PRIMARY KEY(token, run_id))`);
 }

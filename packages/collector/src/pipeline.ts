@@ -11,6 +11,7 @@ import { romeWallToEpoch, secondsToHms } from '#core/time.ts';
 import { ensureRun, mapSourceKey, resolveRun, type RunRecord } from '#storage/runs.ts';
 import { fillPredictionOutcomes, insertObservation, insertServiceAlert, recordPrediction, saveState, upsertStopEvent } from '#storage/observations.ts';
 import { deriveSegmentObservations } from '#storage/segments.ts';
+import { notifyWatchers } from './notifications.ts';
 import { predictHeuristic, recoveryPrediction, HEURISTIC_MODEL_VERSION } from './heuristic.ts';
 import { applyResidual, getResidualModel, routeEncodingFor, type FeatureInput } from './model.ts';
 import type { ProviderStopEvent, ProviderTrainSnapshot } from '#providers/types.ts';
@@ -408,6 +409,15 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
     };
   }
   saveState(db, runId, JSON.stringify(state));
+
+  // §61: thresholded pushes for devices watching this run (no-op without
+  // watches / APNs config); risk signal reuses the §51 upstream feature
+  notifyWatchers(db, runId, {
+    status: state.status,
+    trainNumber: state.trainNumber,
+    ourEstimate: state.ourEstimate ? { p50: state.ourEstimate.p50 } : null,
+    riskNotice: prediction && (prediction.features.upstreamStopDelayedCount ?? 0) >= 2 ? { upstream: true } : null,
+  });
 
   if (prediction && state.destination.stopId) {
     // record at benchmark-useful granularity: always when the estimate moves

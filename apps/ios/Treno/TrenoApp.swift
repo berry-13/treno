@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct TrenoApp: App {
     @AppStorage("appearance") private var appearance = "system"
+    @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
 
     var body: some Scene {
         WindowGroup {

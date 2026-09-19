@@ -6,18 +6,22 @@
  */
 import { getRow, type Db } from '#core/db.ts';
 import { log } from '#core/log.ts';
+import { join } from 'node:path';
 import type { Config } from '#core/config.ts';
 import { fetchVtTrain, vtAutocomplete, type VtTrainRef } from '#providers/vt.ts';
 import { fetchMiaTrain as fetchMia } from '#providers/mia.ts';
 import { MIA_PARSER_VERSION, MIA_SOURCE } from '#providers/mia.ts';
 import { VT_PARSER_VERSION, VT_SOURCE } from '#providers/vt.ts';
-import { ATM_SOURCE, atmConfiguredStops, fetchAtmStop } from '#providers/atm.ts';
+import { ATM_SOURCE, atmConfiguredStops, decodeWaitMessage, fetchAtmStop, fetchMetroStatus } from '#providers/atm.ts';
+import { ensureAtmSchedule } from '#gtfs/atm.ts';
 import { putSnapshot } from '#storage/rawStore.ts';
-import { updateProviderHealth } from '#storage/observations.ts';
+import { insertServiceAlert, updateProviderHealth } from '#storage/observations.ts';
 import { refreshSegmentStats, logSegmentSummary } from '#storage/segments.ts';
 import { refreshWeather } from './weather.ts';
 import { refreshGauges } from './weather-arpa.ts';
 import { refreshCalendar } from './events.ts';
+import { runDueProbes } from './probes.ts';
+import { pruneWatches } from './notifications.ts';
 import { ingestSnapshot, stateSummaryLine, type FusedState } from './pipeline.ts';
 import { discoverRuns, type DiscoveredRun } from './discover.ts';
 
@@ -74,6 +78,9 @@ export class Collector {
   private lastSummary = 0;
   private lastStatsRefresh = 0;
   private lastAtmPoll = 0;
+  private lastAtmGtfsAt = 0;
+  private lastMetroPollAt = 0;
+  private lastPruneWatchesAt = 0;
   private stopped = false;
   private onTick: ((n: number) => void) | null = null;
 
@@ -171,11 +178,41 @@ export class Collector {
     }
   }
 
-  /** Periodic maintenance: segment-stat refresh (10 min) and optional ATM stop polling (60s). */
+  /** Periodic maintenance: segment-stat refresh (10 min), ATM static-feed
+   * refresh (24h), optional ATM stop polling (60s) and metro status (6h). */
   private maintenance(now: number): void {
     void refreshWeather(); // hourly rain feature for the model
     void refreshGauges(); // ARPA rain-gauge actuals (null until geo join lands)
     void refreshCalendar(this.db); // strikes/stadium/holiday calendar (daily, self-gated)
+    void runDueProbes(this.db).catch((e) => log.warn('collector: probes failed', { error: String(e) })); // F8 national + RAPSODIA (self-gated)
+    if (now - this.lastPruneWatchesAt > 24 * 3600_000) {
+      this.lastPruneWatchesAt = now;
+      pruneWatches(this.db);
+    }
+    if (now - this.lastAtmGtfsAt > 24 * 3600_000) {
+      this.lastAtmGtfsAt = now;
+      void ensureAtmSchedule(this.cfg.dataDir, this.db, this.cfg.userAgent, join(this.cfg.dataDir, 'gtfs', 'atm_gtfs.zip'));
+    }
+    // §25 metro: line-level status every 6h; only disrupted lines become
+    // service alerts (silence = healthy), deduped by content hash
+    if (now - this.lastMetroPollAt > 6 * 3600_000) {
+      this.lastMetroPollAt = now;
+      void (async () => {
+        try {
+          const lines = await fetchMetroStatus(this.cfg.userAgent);
+          for (const l of lines.filter((x) => x.disrupted)) {
+            insertServiceAlert(this.db, {
+              source: 'atm-sm', runId: null, stopId: null,
+              title: 'Metro ' + l.line + (l.direction != null ? ' — ' + l.direction : ''),
+              description: l.status, severity: 'WARNING',
+              raw: l,
+            });
+          }
+        } catch (e) {
+          log.warn('collector: metro status poll failed', { error: String(e) });
+        }
+      })();
+    }
     if (now - this.lastStatsRefresh > 10 * 60_000) {
       this.lastStatsRefresh = now;
       try {
@@ -202,8 +239,15 @@ export class Collector {
             });
             updateProviderHealth(this.db, ATM_SOURCE, { ok: snap.result.ok, latencyMs: snap.result.latencyMs, error: snap.result.error });
             if (snap.result.ok) {
-              this.db.prepare('INSERT INTO atm_stop_observations(stop_id, fetched_at, wait_messages, raw_hash) VALUES(?,?,?,?)')
-                .run(stopId, fetchedAt, JSON.stringify(snap.waitMessages), String(snap.raw.length));
+              // WaitMessage v2: decode the operator's quantized prediction
+              const decoded = snap.waitMessages.map((w) => {
+                const d = decodeWaitMessage(w.message);
+                return { line: w.line, message: w.message, etaSec: d.etaSec, flag: d.flag };
+              });
+              this.db.prepare('INSERT INTO atm_stop_observations(stop_id, fetched_at, wait_messages, raw_hash, etas_json, quality_flags) VALUES(?,?,?,?,?,?)')
+                .run(stopId, fetchedAt, JSON.stringify(snap.waitMessages), String(snap.raw.length),
+                  JSON.stringify(decoded),
+                  decoded.some((d) => d.flag != null) ? JSON.stringify([...new Set(decoded.map((d) => d.flag).filter((f): f is string => f != null))]) : null);
             }
           } catch (e) {
             log.warn('collector: atm poll error', { stopId, error: String(e) });

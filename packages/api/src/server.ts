@@ -12,6 +12,7 @@
  */
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadConfig } from '#core/config.ts';
@@ -19,6 +20,8 @@ import { getRows, getRow, type Db } from '#core/db.ts';
 import { log } from '#core/log.ts';
 import { openTrenoDb } from '#gtfs/setup.ts';
 import { searchStops, stopById, stopDepartures, type StopDeparture } from '#gtfs/schedule.ts';
+import { atmSearchStops, atmStopById, atmStopDepartures } from '#gtfs/atm.ts';
+import { decodeWaitMessage } from '#providers/atm.ts';
 import { providerHealth } from '#storage/observations.ts';
 import { segmentStatsTable, corridorDelta, segmentId as segId } from '#storage/segments.ts';
 import { connectionOptions } from '#collector/heuristic.ts';
@@ -82,6 +85,14 @@ export function buildApp(db: Db) {
       segmentsEffective: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM (SELECT segment_id FROM segment_stats UNION SELECT segment_id FROM segment_stats_prior)') ?? { n: 0 }).n,
       alerts: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM service_alerts') ?? { n: 0 }).n,
     };
+    // F8 readiness probes (national rail, RAPSODIA catalog) — newest per kind
+    const probes: Record<string, unknown> = {};
+    try {
+      for (const r of getRows<{ kind: string; payload_json: string; created_at: number }>(
+        db, 'SELECT kind, payload_json, created_at FROM probe_results ORDER BY created_at DESC LIMIT 10')) {
+        if (!(r.kind in probes)) probes[r.kind] = { at: r.created_at, ...JSON.parse(r.payload_json) as object };
+      }
+    } catch { /* probe table absent on old DBs */ }
     // source change rate over the last hour (§58 freshness evidence)
     const hourAgo = Date.now() - 3600_000;
     const changes = new Map<string, number>();
@@ -89,7 +100,7 @@ export function buildApp(db: Db) {
       changes.set(r.source, r.n);
     }
     const providers = providerHealth(db).map((p) => ({ ...p, changedLastHour: changes.get(p.source) ?? 0 }));
-    return c.json({ ok: true, counts, providers });
+    return c.json({ ok: true, counts, providers, probes });
   });
 
   app.get('/api/trains', (c) => {
@@ -202,6 +213,175 @@ export function buildApp(db: Db) {
     return c.json({ ...base, stops, recentObservations: observations, latestPrediction: latestPrediction ?? null, connections, crowding: crowding ?? null, riskNotice });
   });
 
+  // §84 reliability: 30-day actual behaviour. Percentages are suppressed
+  // (null) below n=20 — no fake stats on thin data (§16).
+  app.get('/api/reliability/train/:number', (c) => {
+    const number = c.req.param('number');
+    const since = Date.now() - 30 * 86400_000;
+    const sinceYmd = new Date(since).toISOString().slice(0, 10);
+    const arrivals = getRows<{ arr_delay_sec: number }>(
+      db,
+      'SELECT e.arr_delay_sec AS arr_delay_sec FROM train_stop_events e JOIN train_runs r ON r.id = e.run_id WHERE r.train_number=? AND e.stop_id = r.destination_stop_id AND e.arr_delay_sec IS NOT NULL AND r.service_date >= ?',
+      [number, sinceYmd],
+    );
+    const cancelled = (getRow<{ n: number }>(
+      db,
+      'SELECT COUNT(*) AS n FROM train_stop_events e JOIN train_runs r ON r.id = e.run_id WHERE r.train_number=? AND e.cancelled = 1 AND r.service_date >= ?',
+      [number, sinceYmd],
+    ) ?? { n: 0 }).n;
+    const segs = getRows<{ from_stop_id: string; to_stop_id: string; delay_delta_sec: number }>(
+      db,
+      'SELECT s.from_stop_id, s.to_stop_id, s.delay_delta_sec FROM segment_observation s JOIN train_runs r ON r.id = s.run_id WHERE r.train_number=? AND s.entered_at >= ? AND s.delay_delta_sec IS NOT NULL',
+      [number, since],
+    );
+    const bySeg = new Map<string, { name: [string, string]; ds: number[] }>();
+    for (const s of segs) {
+      const k = s.from_stop_id + '>' + s.to_stop_id;
+      let e = bySeg.get(k);
+      if (!e) bySeg.set(k, e = { name: [s.from_stop_id, s.to_stop_id], ds: [] });
+      e.ds.push(s.delay_delta_sec);
+    }
+    const nameOf = (sid: string) => getRow<{ stop_name: string }>(db, 'SELECT stop_name FROM gtfs_stops WHERE stop_id=?', [sid])?.stop_name ?? sid;
+    const segStats = [...bySeg.values()].filter((e) => e.ds.length >= 20).map((e) => {
+      const sorted = [...e.ds].sort((a, b) => a - b);
+      return {
+        fromName: nameOf(e.name[0]!),
+        toName: nameOf(e.name[1]!),
+        medianDelayDeltaSec: Math.round(sorted[Math.floor(sorted.length / 2)]!),
+        n: sorted.length,
+      };
+    });
+    const delays = arrivals.map((a) => a.arr_delay_sec).sort((a, b) => a - b);
+    const n = delays.length;
+    const q = (p: number): number | null => n > 0 ? delays[Math.min(n - 1, Math.floor(p * n))]! : null;
+    const pct = (cond: (d: number) => boolean): number | null => n >= 20 ? Math.round((delays.filter(cond).length / n) * 1000) / 10 : null;
+    const worst = segStats.reduce<typeof segStats[number] | null>((w, s) => (!w || (s.medianDelayDeltaSec ?? -1e9) > (w.medianDelayDeltaSec ?? -1e9)) ? s : w, null);
+    const recovery = segStats.reduce<typeof segStats[number] | null>((w, s) => (!w || (s.medianDelayDeltaSec ?? 1e9) < (w.medianDelayDeltaSec ?? 1e9)) ? s : w, null);
+    return c.json({
+      trainNumber: number,
+      days: 30,
+      completedRuns: n,
+      onTimePct: pct((d) => d < 180),
+      late5Pct: pct((d) => d >= 300),
+      late10Pct: pct((d) => d >= 600),
+      cancelledPct: n + cancelled >= 20 ? Math.round((cancelled / (n + cancelled)) * 1000) / 10 : null,
+      medianDelaySec: q(0.5),
+      p90DelaySec: q(0.9),
+      worstSegment: worst && (worst.medianDelayDeltaSec ?? 0) > 30 ? worst : null,
+      recoverySegment: recovery && (recovery.medianDelayDeltaSec ?? 0) < -15 ? recovery : null,
+    });
+  });
+
+  app.get('/api/reliability/stop/:id', (c) => {
+    const stopId = c.req.param('id');
+    const sinceYmd = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
+    const rows = getRows<{ route_id: string | null; arr_delay_sec: number }>(
+      db,
+      `SELECT r.route_id, e.arr_delay_sec FROM train_stop_events e JOIN train_runs r ON r.id = e.run_id
+       WHERE e.stop_id=? AND e.arr_delay_sec IS NOT NULL AND r.service_date >= ? AND r.route_id IS NOT NULL`,
+      [stopId, sinceYmd],
+    );
+    const byRoute = new Map<string, number[]>();
+    for (const r of rows) {
+      let a = byRoute.get(r.route_id!);
+      if (!a) byRoute.set(r.route_id!, a = []);
+      a.push(r.arr_delay_sec);
+    }
+    const routes = [...byRoute.entries()].map(([routeId, ds]) => {
+      const sorted = [...ds].sort((a, b) => a - b);
+      const routeName = getRow<{ route_short_name: string | null; route_long_name: string | null }>(db, 'SELECT route_short_name, route_long_name FROM gtfs_routes WHERE route_id=?', [routeId]);
+      return {
+        routeId,
+        routeName: routeName?.route_short_name ?? routeName?.route_long_name ?? routeId,
+        n: sorted.length,
+        onTimePct: sorted.length >= 20 ? Math.round((sorted.filter((d) => d < 180).length / sorted.length) * 1000) / 10 : null,
+        medianDelaySec: sorted.length >= 20 ? sorted[Math.floor(sorted.length / 2)]! : null,
+        p90DelaySec: sorted.length >= 20 ? sorted[Math.min(sorted.length - 1, Math.floor(0.9 * sorted.length))]! : null,
+      };
+    }).filter((r) => r.n >= 10).sort((a, b) => b.n - a.n);
+    return c.json({ stopId, days: 30, routes });
+  });
+
+  // §61 device registry — the API owns writes, the collector's notifier reads
+  app.post('/api/devices', async (c) => {
+    const body = await c.req.json<{ token?: string; runId?: number }>().catch(() => null);
+    const token = body?.token;
+    if (typeof token !== 'string' || token.length < 32 || token.length > 200 || !/^[a-f0-9]+$/i.test(token)) {
+      return c.json({ error: 'invalid token' }, 400);
+    }
+    const { addDevice } = await import('#collector/notifications.ts');
+    addDevice(db, token, body?.runId ?? null);
+    return c.json({ ok: true });
+  });
+
+  app.delete('/api/devices/:token', async (c) => {
+    const token = c.req.param('token');
+    const { removeDevice } = await import('#collector/notifications.ts');
+    removeDevice(db, token);
+    return c.json({ ok: true });
+  });
+
+  // §60 SSE: live train state stream. The API process doesn't see collector
+  // writes directly, so each open stream tails train_state.updated_at at 5 s
+  // (a cheap indexed read) and emits the changed view. Heartbeat comments
+  // every 20 s keep proxies from idling the connection.
+  let openStreams = 0;
+  app.get('/api/stream/trains/:id', (c) => {
+    if (openStreams >= 50) return c.json({ error: 'too many streams' }, 429);
+    const idParam = c.req.param('id');
+    const run = idParam.includes('@')
+      ? getRow<{ id: number }>(db, 'SELECT id FROM train_runs WHERE train_number=? AND service_date=?', [idParam.split('@')[0]!, idParam.split('@')[1] ?? ''])
+      : getRow<{ id: number }>(db, 'SELECT id FROM train_runs WHERE id=?', [Number(idParam)]);
+    if (!run || !Number.isFinite(run.id)) return c.json({ error: 'not found' }, 404);
+    const runId = run.id;
+    openStreams++;
+    let closed = false;
+    return streamSSE(c, async (stream) => {
+      stream.onAbort(() => { closed = true; });
+      let lastStateAt: number | null = null;
+      let lastPlatforms = '';
+      let lastAlertCount = -1;
+      let tick = 0;
+      try {
+        while (!closed && !stream.aborted) {
+          const st = getRow<{ state_json: string; updated_at: number }>(db, 'SELECT state_json, updated_at FROM train_state WHERE run_id=?', [runId]);
+          if (st && st.updated_at !== lastStateAt) {
+            lastStateAt = st.updated_at;
+            await stream.writeSSE({ event: 'state_update', data: st.state_json });
+          }
+          const plats = getRows<{ stop_id: string; platform_actual: string | null; platform_is_actual: number | null }>(
+            db,
+            'SELECT stop_id, platform_actual, platform_is_actual FROM train_stop_events WHERE run_id=? AND platform_actual IS NOT NULL ORDER BY stop_sequence',
+            [runId],
+          );
+          const platsKey = JSON.stringify(plats);
+          if (platsKey !== lastPlatforms) {
+            if (lastPlatforms !== '') {
+              await stream.writeSSE({ event: 'platform_update', data: platsKey });
+            }
+            lastPlatforms = platsKey;
+          }
+          const since = Date.now() - 3600_000;
+          const alerts = getRows(db, 'SELECT id, title, description, severity, created_at FROM service_alerts WHERE run_id=? AND created_at >= ? ORDER BY created_at DESC LIMIT 10', [runId, since]);
+          if (alerts.length !== lastAlertCount) {
+            if (lastAlertCount !== -1) {
+              for (const a of alerts.slice(0, Math.max(0, alerts.length - lastAlertCount))) {
+                await stream.writeSSE({ event: 'alert', data: JSON.stringify(a) });
+              }
+            }
+            lastAlertCount = alerts.length;
+          }
+          if (tick++ % 4 === 3) await stream.write(': hb\n\n');
+          await stream.sleep(5000);
+        }
+      } catch {
+        // client disconnected mid-write — hono closes the stream
+      } finally {
+        openStreams--;
+      }
+    });
+  });
+
   app.get('/api/segments', (c) => {
     const limit = Math.min(Number(c.req.query('limit') ?? 100), 500);
     return c.json(segmentStatsTable(db, limit));
@@ -263,7 +443,56 @@ export function buildApp(db: Db) {
   app.get('/api/stops/search', (c) => {
     const q = (c.req.query('q') ?? '').trim();
     if (q.length < 2) return c.json([]);
-    return c.json(searchStops(db, q, 20));
+    const rail = searchStops(db, q, 20).map((s) => ({ ...s, network: 'rail' }));
+    // ATM stops ride along when the static feed is loaded (F1)
+    let atm: Array<{ stop_id: string; stop_name: string; stop_lat: number | null; stop_lon: number | null; network: string }> = [];
+    try {
+      atm = atmSearchStops(db, q, 10).map((s) => ({ ...s, network: 'atm' }));
+    } catch { /* atm tables absent on old DBs */ }
+    return c.json([...rail, ...atm]);
+  });
+
+  // F1: ATM stop board — scheduled departures from the static feed merged
+  // with the operator's live quantized predictions (WaitMessage), which ARE
+  // the operator estimate here (no raw telemetry exists, GOAL §21)
+  app.get('/api/atm/stops/:id/board', (c) => {
+    const stopId = c.req.param('id');
+    const stop = atmStopById(db, stopId);
+    if (!stop) return c.json({ error: 'unknown atm stop' }, 404);
+    const today = romeYmd(Date.now());
+    const nowSec = secondsIntoServiceDay(today);
+    const deps = atmStopDepartures(db, stopId, today, nowSec - 300, nowSec + 5400, 40);
+    // freshest live prediction per line (decoded WaitMessages)
+    const live = new Map<string, { etaSec: number | null; flag: string | null; fetchedAt: number }>();
+    for (const r of getRows<{ etas_json: string | null; wait_messages: string | null; fetched_at: number }>(
+      db,
+      'SELECT etas_json, wait_messages, fetched_at FROM atm_stop_observations WHERE stop_id=? ORDER BY fetched_at DESC LIMIT 3',
+      [stopId],
+    )) {
+      let entries: Array<{ line: string | null; etaSec?: number | null; flag?: string | null }> = [];
+      try {
+        entries = r.etas_json != null
+          ? JSON.parse(r.etas_json) as typeof entries
+          : (JSON.parse(r.wait_messages ?? '[]') as Array<{ line: string | null; message: string | null }>)
+              .map((w) => ({ line: w.line, ...decodeWaitMessage(w.message) }));
+      } catch { continue; }
+      for (const e of entries) {
+        if (e.line == null || live.has(e.line)) continue;
+        live.set(e.line, { etaSec: e.etaSec ?? null, flag: e.flag ?? null, fetchedAt: r.fetched_at });
+      }
+    }
+    const merged = deps.map((d) => {
+      const l = d.route_short_name != null ? live.get(d.route_short_name) : undefined;
+      return {
+        line: d.route_short_name,
+        routeType: d.route_type,
+        destinationName: d.destination_name,
+        scheduledInSec: d.departure_sec != null ? d.departure_sec - nowSec : null,
+        liveEtaSec: l?.etaSec ?? null,
+        flag: l?.flag ?? null,
+      };
+    });
+    return c.json({ stop: { stopId: stop.stop_id, name: stop.stop_name }, generatedAt: Date.now(), departures: merged, liveLines: [...live.entries()].map(([line, v]) => ({ line, etaSec: v.etaSec, flag: v.flag })) });
   });
 
   // collection heartbeat: per-15-min counts over the last 48h so feed gaps

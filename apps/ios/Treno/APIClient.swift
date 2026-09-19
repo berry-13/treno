@@ -66,6 +66,10 @@ final class APIClient {
         try await get("/api/stops/\(stopId)/departures")
     }
 
+    func atmBoard(stopId: String) async throws -> AtmBoardResponse {
+        try await get("/api/atm/stops/\(stopId)/board")
+    }
+
     func allStations() async throws -> [StationLite] {
         try await get("/api/stations")
     }
@@ -81,5 +85,15 @@ final class APIClient {
 
     func health() async throws -> HealthResponse {
         try await get("/api/health")
+    }
+
+    func corridors() async throws -> [CorridorRow] {
+        struct R: Decodable { let corridors: [CorridorRow] }
+        let r: R = try await get("/api/corridors?limit=3")
+        return r.corridors
+    }
+
+    func reliability(trainNumber: String) async throws -> TrainReliability? {
+        try await get("/api/reliability/train/\(trainNumber.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trainNumber)")
     }
 }

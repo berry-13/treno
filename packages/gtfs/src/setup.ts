@@ -8,6 +8,7 @@ import { loadConfig, type Config } from '#core/config.ts';
 import { openDb, type Db } from '#core/db.ts';
 import { log } from '#core/log.ts';
 import { ensureGtfsTables, loadGtfsZip } from './loader.ts';
+import { ensureAtmTables } from './atm.ts';
 import { ensureNormalizedTables } from '#storage/schema.ts';
 
 const STALE_MS = 12 * 3600 * 1000;
@@ -20,6 +21,7 @@ export function openTrenoDb(cfg: Config): Db {
   mkdirSync(join(cfg.dataDir, 'db'), { recursive: true });
   const db = openDb(dbPath(cfg));
   ensureGtfsTables(db);
+  ensureAtmTables(db);
   ensureNormalizedTables(db);
   return db;
 }

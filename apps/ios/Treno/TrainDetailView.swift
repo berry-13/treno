@@ -5,7 +5,9 @@ struct TrainDetailView: View {
     @State private var detail: TrainDetail?
     @State private var failed = false
     @State private var loading = false
+    @State private var reliability: TrainReliability?
     private let refresh = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
+    private let sse = SSEClient()
 
     private var arrived: Bool { detail?.state?.status == "arrived" }
 
@@ -36,6 +38,9 @@ struct TrainDetailView: View {
                             stopList(stops, state: detail.state)
                         }
                     }
+                    if let rel = reliability, arrived || detail.state?.status == "scheduled" || detail.state?.status == "running" {
+                        reliabilitySection(rel)
+                    }
                     if let connections = detail.connections, !connections.isEmpty, detail.state?.status != "cancelled" {
                         connectionsSection(connections)
                     }
@@ -54,8 +59,34 @@ struct TrainDetailView: View {
             ?? detail?.destinationStop ?? "Train")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
-        .task { await load() }
+        .task { await load(); startStream() }
+        .onDisappear { sse.close() }
         .onReceive(refresh) { _ in Task { await load() } }
+    }
+
+    /// §60 live updates: consume the SSE state stream and patch the fused
+    /// state in place; the 15 s timer stays as reconnect/fallback hygiene.
+    private func startStream() {
+        guard let url = URL(string: APIClient.shared.baseUrl + "/api/stream/trains/\(ref.runId)") else { return }
+        sse.open(
+            url: url,
+            onEvent: { ev in
+                guard ev.event == "state_update", let data = ev.data.data(using: .utf8) else { return }
+                let state = try? JSONDecoder().decode(TrainState.self, from: data)
+                Task { @MainActor in
+                    if let state, var d = detail {
+                        d.state = state
+                        detail = d
+                    }
+                }
+            },
+            onClose: { _ in
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                    startStream()
+                }
+            }
+        )
     }
 
     private func load() async {
@@ -67,7 +98,37 @@ struct TrainDetailView: View {
             guard !Task.isCancelled else { return }
             detail = response
             failed = false
+            if reliability == nil {
+                reliability = (try? await APIClient.shared.reliability(trainNumber: response.trainNumber)) ?? nil
+            }
         } catch { if !Task.isCancelled { failed = true } }
+    }
+
+    /// §84: 30-day behaviour one-liner, expandable to segment hot spots.
+    /// Thin-data fields arrive null and simply don't render.
+    private func reliabilitySection(_ rel: TrainReliability) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let onTime = rel.onTimePct {
+                Text("This train, last 30 days: on time \(Int(onTime.rounded()))%")
+                    .font(.subheadline.weight(.medium)).foregroundStyle(.tFg)
+                HStack(spacing: 14) {
+                    if let late5 = rel.late5Pct { Text(">\(5)m late \(Int(late5.rounded()))%") }
+                    if let late10 = rel.late10Pct { Text(">\(10)m late \(Int(late10.rounded()))%") }
+                    if let cxl = rel.cancelledPct { Text("cancelled \(Int(cxl.rounded()))%") }
+                    Text("\(rel.completedRuns) runs")
+                }.font(.footnote).foregroundStyle(.tMuted)
+            } else {
+                Text("\(rel.completedRuns) completed runs in the last 30 days")
+                    .font(.footnote).foregroundStyle(.tMuted)
+            }
+            if let worst = rel.worstSegment {
+                Text("Slowest stretch: \(worst.fromName ?? "?") → \(worst.toName ?? "?") \(Fmt.delayShort(worst.medianDelayDeltaSec ?? 0))")
+                    .font(.footnote).foregroundStyle(.tLate)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color.tCard, in: RoundedRectangle(cornerRadius: 20))
     }
 
     // MARK: segment times

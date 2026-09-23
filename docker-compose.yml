@@ -28,6 +28,14 @@ services:
       - treno-data:/data
     environment:
       TRENO_CLICKHOUSE_URL: http://clickhouse:8123
+      # APNs push credentials — set in the server's .env next to the compose
+      # file; all optional (unset = notifications silently disabled).
+      # The .p8 lives on the treno-data volume, e.g. /data/apns/AuthKey.p8.
+      TRENO_APNS_KEY_PATH: ${TRENO_APNS_KEY_PATH:-}
+      TRENO_APNS_KEY_ID: ${TRENO_APNS_KEY_ID:-}
+      TRENO_APNS_TEAM_ID: ${TRENO_APNS_TEAM_ID:-}
+      TRENO_APNS_TOPIC: ${TRENO_APNS_TOPIC:-}
+      TRENO_APNS_SANDBOX: ${TRENO_APNS_SANDBOX:-}
     restart: unless-stopped
     healthcheck:
       disable: true

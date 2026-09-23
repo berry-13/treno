@@ -74,7 +74,7 @@ struct Trip: Codable, Identifiable, Hashable {
 @MainActor
 final class TripStore: ObservableObject {
     static let shared = TripStore()
-    static let suiteName = "group.com.berry13.treno"
+    static let suiteName = "group.com.marco13beretta.treno"
 
     @Published var trips: [Trip] = []
     @Published var favorites: Set<String> = []

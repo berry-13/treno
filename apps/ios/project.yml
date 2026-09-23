@@ -37,10 +37,10 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
-        DEVELOPMENT_TEAM: "2PSCFPTSRR"
+        DEVELOPMENT_TEAM: "NF62G3JSYA"
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: Treno/Treno.entitlements
-        PRODUCT_BUNDLE_IDENTIFIER: com.berry13.treno
+        PRODUCT_BUNDLE_IDENTIFIER: com.marco13beretta.treno
   TrenoWidget:
     type: app-extension
     platform: iOS
@@ -58,11 +58,11 @@ targets:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.berry13.treno.widget
+        PRODUCT_BUNDLE_IDENTIFIER: com.marco13beretta.treno.widget
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: Widget/TrenoWidget.entitlements
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
-        DEVELOPMENT_TEAM: "2PSCFPTSRR"
+        DEVELOPMENT_TEAM: "NF62G3JSYA"

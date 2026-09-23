@@ -73,11 +73,11 @@ struct WTripConfig: Codable {
 
 enum WFetch {
     static func baseUrl() -> String {
-        (UserDefaults(suiteName: "group.com.berry13.treno")?.string(forKey: "apiBaseUrl")) ?? "http://192.168.1.242:8787"
+        (UserDefaults(suiteName: "group.com.marco13beretta.treno")?.string(forKey: "apiBaseUrl")) ?? "http://192.168.1.242:8787"
     }
 
     static func tripConfig() -> WTripConfig? {
-        guard let suite = UserDefaults(suiteName: "group.com.berry13.treno"),
+        guard let suite = UserDefaults(suiteName: "group.com.marco13beretta.treno"),
               let d = suite.dictionary(forKey: "widgetTrip"),
               let fromId = d["fromId"] as? String,
               let fromName = d["fromName"] as? String,

@@ -2,6 +2,11 @@
  * Direct-journey planning over the canonical GTFS tables: trains that call at
  * the origin and then the destination, within a forward time window, each
  * fused with live state (delay, platform, our estimate).
+ *
+ * §19/§62 smart alternatives: options are ranked by expected REAL arrival
+ * (live/predicted estimate when one exists, scheduled as fallback) plus a
+ * risk penalty for shaky legs — never by scheduled arrival alone. The best
+ * still-catchable option carries `recommended: true`.
  */
 import { getRow, getRows, type Db } from '#core/db.ts';
 import { romeYmd, romeWallToEpoch, ymdPlusDays } from '#core/time.ts';
@@ -20,6 +25,34 @@ export interface JourneyRow {
   actualDepEpoch: number | null;
   platform: string | null;
   state: unknown;
+  // §19/§62 ranking (additive) — expectedArrivalEpoch is the scored expected
+  // actual arrival at the destination stop (== arrEpoch when not predictable;
+  // expectedArrivalLive says which), riskPenaltySec the §19 risk term, and
+  // recommended flags the best still-catchable option by ranked order.
+  expectedArrivalEpoch: number;
+  expectedArrivalLive: boolean;
+  riskPenaltySec: number | null;
+  recommended: boolean;
+}
+
+/** What the fused state carries for ranking (shape of train_state.state_json). */
+interface StateForRanking {
+  status?: string;
+  operatorDelaySec?: number | null;
+  schedArrEpoch?: number | null;
+  ourEstimate?: { p10?: number; p50?: number; p90?: number } | null;
+}
+
+/** §19 risk term: how shaky this leg's arrival is. The p90 tail of our own
+ *  arrival distribution is the single-leg analogue of a shaky connection —
+ *  the §18 connection model consumes this same spread (connectionOptions),
+ *  and per-connection probabilities slot into this penalty unchanged once
+ *  journeys gain transfers. */
+function riskPenaltySecOf(state: StateForRanking | null): number | null {
+  const p50 = state?.ourEstimate?.p50;
+  const p90 = state?.ourEstimate?.p90;
+  if (p50 == null || p90 == null) return null;
+  return Math.min(300, Math.round(0.2 * ((p90 - p50) / 1000)));
 }
 
 interface LegQuery {
@@ -52,7 +85,8 @@ function legsForDay(db: Db, fromId: string, toId: string, ymd: string, fromSec: 
 }
 
 /** Next direct trains from→to starting now-ish. Legs already departed keep
- *  their live state so the UI can show "departed +2" style context. */
+ *  their live state so the UI can show "departed +2" style context.
+ *  Ranked by expected real arrival (§19/§62), depEpoch as tiebreak. */
 export function journeysFor(db: Db, fromId: string, toId: string, nowMs: number, limit = 8): JourneyRow[] {
   const today = romeYmd(nowMs);
   const nowSec = secondsIntoServiceDay(today, nowMs);
@@ -80,7 +114,7 @@ export function journeysFor(db: Db, fromId: string, toId: string, nowMs: number,
     let platform: string | null = null;
     let depDelaySec: number | null = null;
     let actualDepEpoch: number | null = null;
-    let state: unknown = null;
+    let state: StateForRanking | null = null;
     if (run) {
       const ev = getRow<{ actual_dep_epoch: number | null; dep_delay_sec: number | null; platform_actual: string | null }>(
         db,
@@ -97,8 +131,38 @@ export function journeysFor(db: Db, fromId: string, toId: string, nowMs: number,
         if (!Number.isInteger(pn) || pn < 1 || pn > 30) platform = null;
       }
       const st = getRow<{ state_json: string }>(db, 'SELECT state_json FROM train_state WHERE run_id=?', [run.id]);
-      if (st) state = JSON.parse(st.state_json);
+      if (st) state = JSON.parse(st.state_json) as StateForRanking;
     }
+    // §19/§62: expected real arrival at the destination stop — strongest
+    // signal first: what actually happened, then the operator's own
+    // stop-level prediction, then our run-level prediction (its delay,
+    // measured against the run's scheduled terminus arrival, carried onto
+    // this leg — exact when toId is the terminus), then the observed
+    // departure delay carried through. Scheduled only as the last resort.
+    let expectedArrivalEpoch = arrEpoch;
+    let expectedArrivalLive = false;
+    if (run) {
+      const arrEv = getRow<{ actual_arr_epoch: number | null; op_pred_arr_epoch: number | null }>(
+        db,
+        'SELECT actual_arr_epoch, op_pred_arr_epoch FROM train_stop_events WHERE run_id=? AND stop_id=?',
+        [run.id, toId],
+      );
+      const est = state?.ourEstimate;
+      if (arrEv?.actual_arr_epoch != null) {
+        expectedArrivalEpoch = arrEv.actual_arr_epoch;
+        expectedArrivalLive = true;
+      } else if (arrEv?.op_pred_arr_epoch != null) {
+        expectedArrivalEpoch = arrEv.op_pred_arr_epoch;
+        expectedArrivalLive = true;
+      } else if (est?.p50 != null && state?.schedArrEpoch != null) {
+        expectedArrivalEpoch = arrEpoch + (est.p50 - state.schedArrEpoch);
+        expectedArrivalLive = true;
+      } else if (depDelaySec != null) {
+        expectedArrivalEpoch = arrEpoch + depDelaySec * 1000;
+        expectedArrivalLive = true;
+      }
+    }
+    const riskPenaltySec = riskPenaltySecOf(state);
     rows.push({
       runId: run?.id ?? null,
       trainNumber,
@@ -112,8 +176,27 @@ export function journeysFor(db: Db, fromId: string, toId: string, nowMs: number,
       actualDepEpoch,
       platform,
       state,
+      expectedArrivalEpoch: Math.round(expectedArrivalEpoch),
+      expectedArrivalLive,
+      riskPenaltySec,
+      recommended: false,
     });
   }
-  rows.sort((a, b) => a.depEpoch - b.depEpoch);
-  return rows.slice(0, limit);
+  // §19 rank: expected real arrival, penalised for a shaky p90 tail;
+  // departure order breaks ties (and is the natural order when nothing is
+  // live-tracked, so far-future searches keep today's behaviour)
+  const score = (r: JourneyRow) => r.expectedArrivalEpoch + (r.riskPenaltySec ?? 0) * 1000;
+  rows.sort((a, b) => (score(a) - score(b)) || (a.depEpoch - b.depEpoch));
+  const ranked = rows.slice(0, limit);
+  // flag the best option the rider can still catch — an already-departed or
+  // cancelled option may rank first, but it is not a recommendation
+  const boardable = (r: JourneyRow) => {
+    const st = r.state as StateForRanking | null;
+    return st?.status !== 'cancelled' && st?.status !== 'arrived'
+      && r.actualDepEpoch == null
+      && r.depEpoch + (r.depDelaySec ?? 0) * 1000 >= nowMs - 30_000;
+  };
+  const best = ranked.find(boardable);
+  if (best) best.recommended = true;
+  return ranked;
 }

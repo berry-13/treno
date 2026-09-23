@@ -154,6 +154,11 @@ struct TripSearchSheet: View {
                     if j.state?.isFresh == true && j.state?.status == "running" {
                         Circle().fill(Color.tGood).frame(width: 5, height: 5)
                     }
+                    // §19/§62: the option the server ranks best by expected
+                    // real arrival gets a quiet mark, never a reorder hint
+                    if j.recommended == true {
+                        TBadge("Recommended", .tPrimary)
+                    }
                 }
                 if let dest = j.finalDestinationName, dest != to?.name {
                     Text("via " + dest)
@@ -172,9 +177,19 @@ struct TripSearchSheet: View {
             Image(systemName: "arrow.right")
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.tDim)
-            Text(Fmt.hhmm(j.expectedArrival))
-                .font(.body.weight(.semibold).monospacedDigit())
-                .foregroundStyle(.tFg)
+            // §19/§62: expected real arrival — the server's ranked estimate
+            // when it moves the scheduled time by more than a minute, with
+            // the timetable time struck through underneath
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(Fmt.hhmm(j.showsExpectedArrival ? j.rankedArrival : j.expectedArrival))
+                    .font(.body.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.tFg)
+                if j.showsExpectedArrival {
+                    Text(Fmt.hhmm(j.arrEpoch))
+                        .font(.caption.monospacedDigit()).strikethrough()
+                        .foregroundStyle(.tMuted)
+                }
+            }
         }
     }
 
@@ -188,5 +203,25 @@ struct TripSearchSheet: View {
             if !silent { failed = true; journeys = [] }
         }
         if !silent { loading = false }
+    }
+}
+
+// MARK: - §19/§62 smart-alternative ranking
+
+extension JourneyRow {
+    /// Server-ranked expected real arrival; falls back to the client-side
+    /// estimate (scheduled + observed delay) when the server sent none.
+    var rankedArrival: Double { expectedArrivalEpoch ?? expectedArrival }
+    /// Expected minus scheduled arrival, ms — nil when the server sent no
+    /// estimate for this option.
+    var rankedArrivalDeltaMs: Double? {
+        guard let expectedArrivalEpoch else { return nil }
+        return expectedArrivalEpoch - arrEpoch
+    }
+    /// The expected time is worth printing only when it moves the scheduled
+    /// one by more than a minute (§19: show expected arrival where it differs).
+    var showsExpectedArrival: Bool {
+        guard let d = rankedArrivalDeltaMs else { return false }
+        return abs(d) > 60_000
     }
 }

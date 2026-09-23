@@ -25,6 +25,21 @@ struct TripsView: View {
                                 TripCard(trip: trip, next: summaries.next[trip.id],
                                          loading: !summaries.hasLoaded, failed: summaries.failed.contains(trip.id))
                             }.buttonStyle(.plain)
+                            // §19/§62 smart alternatives: when the ranked
+                            // next option's expected real arrival differs
+                            // from the timetable, say so under the card
+                            if let next = summaries.next[trip.id], next.showsExpectedArrival {
+                                HStack(spacing: 6) {
+                                    if next.recommended == true {
+                                        Image(systemName: "sparkle")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.tPrimary)
+                                    }
+                                    Text("Expected \(Fmt.hhmm(next.rankedArrival)) · ranked by real arrival")
+                                        .font(.caption)
+                                        .foregroundStyle(.tMuted)
+                                }.padding(.horizontal, 4)
+                            }
                         }
                     }
                 }

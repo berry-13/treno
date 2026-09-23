@@ -26,6 +26,14 @@ struct JourneyRow: Codable, Identifiable, Hashable {
     let actualDepEpoch: Double?
     let platform: String?
     let state: TrainState?
+    // §19/§62 smart alternatives (server-ranked; all optional so older
+    // payloads keep decoding): expected real arrival, whether a live or
+    // predicted estimate backed it, the §19 risk penalty, and the flag on
+    // the best still-catchable option.
+    var expectedArrivalEpoch: Double?
+    var expectedArrivalLive: Bool?
+    var riskPenaltySec: Int?
+    var recommended: Bool?
     var id: String { trainNumber + "@" + String(Int(depEpoch)) }
 }
 

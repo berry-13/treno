@@ -112,6 +112,22 @@ CREATE TABLE IF NOT EXISTS source_snapshots (
 ALTER TABLE train_observations ADD COLUMN IF NOT EXISTS crowding_pct Nullable(Int32);
 ALTER TABLE train_observations ADD COLUMN IF NOT EXISTS crowding_label Nullable(String);
 
+-- source conflicts (GOAL.md §78), added 2026-09-23 — materialized MIA vs
+-- ViaggiaTreno disagreement per run/field (delay_source_spread feature);
+-- SQLite source_conflicts is the operational truth, this the analytical mirror
+CREATE TABLE IF NOT EXISTS source_conflicts (
+  id UInt64,
+  run_id UInt32,
+  ts DateTime64(3),
+  field LowCardinality(String),
+  value_a Nullable(Float64),
+  value_b Nullable(Float64),
+  source_a LowCardinality(String),
+  source_b LowCardinality(String),
+  spread_seconds Int32,
+  observed_at Nullable(DateTime64(3))
+) ENGINE = MergeTree ORDER BY (run_id, ts);
+
 -- railway reporting points (GOAL.md §82), added 2026-09-23 — additive.
 -- Observation-driven registry of every location providers report (junctions,
 -- bivi, control posts, border points; matched passenger stops typed as such).

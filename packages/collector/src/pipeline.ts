@@ -12,6 +12,7 @@ import { ensureRun, mapSourceKey, resolveRun, type RunRecord } from '#storage/ru
 import { fillPredictionOutcomes, insertObservation, insertServiceAlert, recordPrediction, saveState, upsertStopEvent } from '#storage/observations.ts';
 import { deriveSegmentObservations } from '#storage/segments.ts';
 import { notifyWatchers } from './notifications.ts';
+import { recordSourceConflict } from './conflicts-backfill.ts';
 import { predictHeuristic, recoveryPrediction, HEURISTIC_MODEL_VERSION } from './heuristic.ts';
 import { applyResidual, getResidualModel, routeEncodingFor, type FeatureInput } from './model.ts';
 import type { ProviderStopEvent, ProviderTrainSnapshot } from '#providers/types.ts';
@@ -82,6 +83,13 @@ export function ingestSnapshot(db: Db, s: ProviderTrainSnapshot, meta: IngestMet
       crowdingPct: s.source === 'mia' ? s.crowding : null,
       crowdingLabel: s.source === 'mia' ? s.crowdingLabel : null,
     });
+    // §78 source conflicts: compare this delay observation against the other
+    // rail source's latest inside a 90s window; a >120s disagreement is
+    // materialized (5-min dedup). Rule constants live in conflicts-backfill.ts
+    // so backfill replays exactly what happens here.
+    if (s.delaySeconds != null) {
+      recordSourceConflict(db, runId, s.source, meta.fetchedAt, s.observedAt, s.delaySeconds);
+    }
   }
 
   // §50 alerts: persist provider alerts with dedup
@@ -385,6 +393,7 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
       routeId: prediction.features.routeId,
       routeEncSec: residual ? routeEncodingFor(residual, run.route_id) : 0,
       etaAccelSec: prediction.features.etaAccelSec,
+      delaySourceSpreadSec: prediction.features.delaySourceSpreadSec,
     };
     const corrected = applyResidual(residual, fi, prediction.p10, prediction.p50, prediction.p90);
     prediction = {

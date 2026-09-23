@@ -69,6 +69,7 @@ export interface HeuristicPrediction {
     upstreamStopDelayedCount: number | null;  // trains leaving the next stop ≥5 min late, last 45 min
     routeId: string | null;                    // line identity (P4 target-encoding key)
     etaAccelSec: number | null;                // 2nd-order operator-ETA movement (sec per 5min²)
+    delaySourceSpreadSec: number | null;       // §78: latest materialized MIA-vs-VT delay disagreement at or before now (0 = agreement); stored to features_json for training
   };
 }
 
@@ -206,9 +207,23 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
         upstreamStopDelayedCount: up.upstreamStopDelayedCount,
         routeId: run.route_id,
         etaAccelSec: vel.accelSec,
+        delaySourceSpreadSec: latestConflictSpread(db, run.id, Date.now()),
       };
     })(),
   };
+}
+
+/** §78 point-in-time lookup: the newest source_conflicts row for this run at
+ *  or before `atMs` (rows materialized after the prediction instant are
+ *  invisible, so training and serving see the same past). null when the two
+ *  sources have never disagreed on this run — featureRow maps null to 0. */
+export function latestConflictSpread(db: Db, runId: number, atMs: number): number | null {
+  const r = getRow<{ spread_seconds: number }>(
+    db,
+    "SELECT spread_seconds FROM source_conflicts WHERE run_id=? AND field='delay_seconds' AND ts<=? ORDER BY ts DESC LIMIT 1",
+    [runId, atMs],
+  );
+  return r?.spread_seconds ?? null;
 }
 
 /** Context features the heuristic doesn't use but future trained models do.

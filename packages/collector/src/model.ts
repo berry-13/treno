@@ -48,6 +48,11 @@ export interface FeatureInput {
   routeId?: string | null;
   routeEncSec?: number | null;
   etaAccelSec?: number | null;
+  // added 2026-09-23 (§78): latest materialized MIA-vs-ViaggiaTreno delay
+  // disagreement (source_conflicts.spread_seconds) at or before the
+  // prediction instant — 0 when the sources agree; featureRow treats absent
+  // (pre-feature rows) as 0 too
+  delaySourceSpreadSec?: number | null;
 }
 
 export const FEATURE_NAMES = [
@@ -81,6 +86,8 @@ export const FEATURE_NAMES = [
   'upstreamDelayed',
   'routeEnc',
   'etaAccel',
+  // appended 2026-09-23 (§78) — same append-only contract
+  'sourceSpread',
 ] as const;
 
 const cap = (v: number, lim: number): number => Math.max(-lim, Math.min(lim, v));
@@ -123,6 +130,7 @@ export function featureRow(x: FeatureInput): number[] {
     Math.min(x.upstreamStopDelayedCount ?? 0, 10) / 5,
     cap(x.routeEncSec ?? 0, 600) / 300,
     cap(x.etaAccelSec ?? 0, 1200) / 600,
+    cap(x.delaySourceSpreadSec ?? 0, 1800) / 600,
   ];
 }
 

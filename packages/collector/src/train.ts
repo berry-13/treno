@@ -16,6 +16,7 @@ import { loadConfig } from '#core/config.ts';
 import { log } from '#core/log.ts';
 import { openTrenoDb } from '#gtfs/setup.ts';
 import { FEATURE_NAMES, featureRow, type FeatureInput, type ResidualModel, type ConformalBucket, type StopModel } from './model.ts';
+import { latestConflictSpread } from './heuristic.ts';
 import { fitGBM, predictGBM, type GBMForest } from './gbm.ts';
 import { RESIDUAL_MODEL_VERSION } from './model.ts';
 
@@ -44,7 +45,8 @@ export function extract(): TrainRow[] {
     run_id: number; generated_at: number; sched_arr_epoch: number | null; operator_eta_epoch: number | null;
     our_p10: number; our_p50: number; our_p90: number; features_json: string; our_error_sec: number; operator_error_sec: number | null;
   }>;
-  db.close();
+  // db stays open through the loop: the §78 spread fallback queries
+  // source_conflicts per row (closed after)
   const out: TrainRow[] = [];
   for (const r of rows) {
     let f: Partial<FeatureInput> = {};
@@ -75,11 +77,17 @@ export function extract(): TrainRow[] {
         precipMm: f.precipMm ?? null,
         routeId: f.routeId ?? null,
         etaAccelSec: f.etaAccelSec ?? null,
+        // §78: predictions recorded before the feature existed have no
+        // delaySourceSpreadSec in features_json — recompute it point-in-time
+        // (latest conflict at or before the prediction instant) so history
+        // carries the signal too; featureRow maps null → 0 on both paths
+        delaySourceSpreadSec: f.delaySourceSpreadSec ?? latestConflictSpread(db, r.run_id, r.generated_at),
       },
       label: r.our_error_sec,
       operatorErrorSec: r.operator_error_sec,
     });
   }
+  db.close();
   return out;
 }
 

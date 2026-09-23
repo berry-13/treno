@@ -56,6 +56,17 @@ export function ensureNormalizedTables(db: Db): void {
   // values implement the rate limits; a rule fires only when its value moved)
   db.exec(`CREATE TABLE IF NOT EXISTS devices(token TEXT PRIMARY KEY, created_at INTEGER NOT NULL, last_seen_at INTEGER)`);
   db.exec(`CREATE TABLE IF NOT EXISTS device_watches(token TEXT NOT NULL, run_id INTEGER NOT NULL, eta_p50_notified INTEGER, cancelled_notified INTEGER DEFAULT 0, risk_notified INTEGER DEFAULT 0, last_notified_at INTEGER DEFAULT 0, PRIMARY KEY(token, run_id))`);
+  // §78 source conflicts: materialized disagreement between two sources on
+  // the same field of the same run (MIA says +4, ViaggiaTreno says +7 → both
+  // observations stay in train_observations AND the disagreement itself is
+  // stored here so it can become a feature — delay_source_spread, "sources
+  // disagreeing predicts instability"). ts is the triggering (newer)
+  // observation's ts, observed_at that observation's upstream observed time;
+  // source_a/source_b are ordered canonically (alphabetical) so a pair yields
+  // one row shape no matter which source landed first. Detection rule lives in
+  // packages/collector/src/conflicts-backfill.ts (shared with the live hook).
+  db.exec(`CREATE TABLE IF NOT EXISTS source_conflicts(id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL, ts INTEGER NOT NULL, field TEXT NOT NULL, value_a REAL, value_b REAL, source_a TEXT NOT NULL, source_b TEXT NOT NULL, spread_seconds INTEGER NOT NULL, observed_at INTEGER, FOREIGN KEY(run_id) REFERENCES train_runs(id))`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_conflict_run_ts ON source_conflicts(run_id, ts)');
   // §82 railway reporting points: non-passenger locations providers report
   // trains at ('Bivio Casirate', 'PM Albate', ...) as a first-class entity,
   // separate from passenger stops (gtfs_stops stays their canonical home;

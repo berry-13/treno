@@ -270,8 +270,8 @@ function loadSweepRows(db: Db): { rows: SweepRowCtx[]; featuredRowsOnly: boolean
     const scopeStops: RiskNoticeStop[] = stops;
     const scopes = runRows.map((r) => riskNoticeScope(scopeStops, r.generated_at));
     const segIds = [...new Set(scopes.flatMap((s) => s.segmentIds))];
-    const minAsOf = Math.min(...runRows.map((r) => r.generated_at));
-    const maxAsOf = Math.max(...runRows.map((r) => r.generated_at));
+    const minAsOf = runRows.reduce((m, r) => Math.min(m, r.generated_at), Infinity);
+    const maxAsOf = runRows.reduce((m, r) => Math.max(m, r.generated_at), -Infinity);
     const traversals = segIds.length > 0
       ? (db.prepare(
           `SELECT segment_id, entered_at, delay_delta_sec, entry_delay_sec, exit_delay_sec
@@ -301,8 +301,10 @@ function loadSweepRows(db: Db): { rows: SweepRowCtx[]; featuredRowsOnly: boolean
   // cancelled preceding trains at each row's next stop (global fetch, per-row filter)
   const nextStops = [...new Set(rows.map((r) => r.scope.nextStopId).filter((s): s is string => s != null))];
   if (nextStops.length > 0) {
-    const minAsOf = Math.min(...rows.map((r) => r.asOf));
-    const maxAsOf = Math.max(...rows.map((r) => r.asOf));
+    // reduce, not Math.min(...spread): 190k+ rows exceed the call-stack arg
+    // limit and threw RangeError in the nightly sweep on the live DB
+    const minAsOf = rows.reduce((m, r) => Math.min(m, r.asOf), Infinity);
+    const maxAsOf = rows.reduce((m, r) => Math.max(m, r.asOf), -Infinity);
     const cancelled = new Map<string, number[]>();
     for (const part of chunk(nextStops, 400)) {
       const ph = part.map(() => '?').join(',');

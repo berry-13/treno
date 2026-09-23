@@ -5,7 +5,9 @@
  *   TRENO_APNS_KEY_PATH  path to the .p8 private key on the server
  *   TRENO_APNS_KEY_ID    10-char key id from the Apple developer portal
  *   TRENO_APNS_TEAM_ID   team id
- *   TRENO_APNS_TOPIC     bundle id of the app (com.berry13.treno)
+ *   TRENO_APNS_TOPIC     bundle id of the app (com.marco13beretta.treno)
+ *   TRENO_APNS_SANDBOX   1 = send via the sandbox host (development-signed
+ *                        builds); unset/0 = production host
  * Unset env ⇒ sendApns() is a no-op returning false — notifications degrade
  * silently, the collector never depends on them.
  */
@@ -66,7 +68,14 @@ export function sendApns(deviceToken: string, title: string, body: string): Prom
       if (!ok && err) log.warn('apns: send failed', { error: String(err) });
     };
     try {
-      const session = http2.connect('https://api.push.apple.com:443');
+      // Development-signed builds (aps-environment=development) register SANDBOX
+      // tokens: those only receive pushes sent to api.sandbox.push.apple.com.
+      // TRENO_APNS_SANDBOX=1 selects it; unset/0 keeps production (App Store/
+      // TestFlight/ad-hoc builds). The .p8 key itself is valid for both.
+      const host = process.env.TRENO_APNS_SANDBOX === '1'
+        ? 'https://api.sandbox.push.apple.com:443'
+        : 'https://api.push.apple.com:443';
+      const session = http2.connect(host);
       session.on('error', (e) => done(false, e));
       const req = session.request({
         ':method': 'POST',

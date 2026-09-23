@@ -49,9 +49,11 @@ function providerJwt(c: ApnsConfig): string {
     Buffer.from(JSON.stringify(obj)).toString('base64url');
   const signingInput = b64url(header) + '.' + b64url(payload);
   const key = createPrivateKey(readFileSync(c.keyPath));
-  const der = createSign('SHA256').update(signingInput).sign(key);
-  // DER → JOSE raw r||s (64 bytes)
-  const raw = der.length === 64 ? der : Buffer.concat([der.subarray(4, 36)!, der.subarray(38)!]);
+  // dsaEncoding: 'ieee-p1363' — JWS ES256 signatures are the raw r||s form
+  // (64 bytes for P-256), NOT Node's default ASN.1/DER. APNs rejects DER.
+  // (A previous hand-rolled DER→raw offset hack was only correct for the
+  // ~25% of signatures where r and s both need no padding byte.)
+  const raw = createSign('SHA256').update(signingInput).sign({ key, dsaEncoding: 'ieee-p1363' });
   const token = signingInput + '.' + raw.toString('base64url');
   cachedJwt = { token, exp: now + 3000 };
   return token;
@@ -87,10 +89,12 @@ export function sendApns(deviceToken: string, title: string, body: string): Prom
       });
       req.setEncoding('utf8');
       let status = 0;
+      let body = '';
       req.on('response', (headers) => { status = Number(headers[':status']); });
-      req.on('data', () => { /* error payload, logged via status */ });
+      req.on('data', (chunk: string) => { body += chunk; });
       req.on('end', () => {
         session.close();
+        if (status !== 200) log.warn('apns: rejected', { status, reason: body.slice(0, 200) });
         done(status === 200);
       });
       req.write(JSON.stringify({ aps: { alert: { title, body }, sound: 'default' } }));

@@ -306,6 +306,69 @@ export function recoveryPrediction(state: FusedState, p50: number): number | nul
   return Math.round(current - expectedAtDest);
 }
 
+// MARK: - recovery probability (§17/§62)
+
+/**
+ * Piecewise-linear CDF through the three arrival-quantile knots
+ * (p10, 0.10), (p50, 0.50), (p90, 0.90).
+ *
+ * Documented assumption: between the knots the CDF is linear (equivalent to
+ * a piecewise-uniform delay distribution carrying 0.4 of mass per inner
+ * segment); outside the knots it keeps the adjacent knot-to-knot slope and is
+ * clamped to [0, 1] — no invented tail shape beyond one segment's width.
+ * Monotone non-decreasing in t by construction.
+ */
+export function quantileCdf(t: number, p10: number, p50: number, p90: number): number {
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+  const lower = Math.max(1, p50 - p10);
+  const upper = Math.max(1, p90 - p50);
+  if (t <= p10) return clamp01(0.10 - (0.40 * (p10 - t)) / lower);
+  if (t <= p50) return 0.10 + (0.40 * (t - p10)) / lower;
+  if (t <= p90) return 0.50 + (0.40 * (t - p50)) / upper;
+  return clamp01(0.90 + (0.40 * (t - p90)) / upper);
+}
+
+export interface RecoveryForecast {
+  /** P(delay at the arrival stop ≤ currentDelaySec − recoverBySec), 0..1 */
+  probRecover: number;
+  /** expected delay at the arrival stop, seconds (the p50 of the distribution) */
+  expectedDelaySec: number;
+  /** true: probability approximated from the p10/p50/p90 quantile CDF */
+  basedOnQuantiles: true;
+  /** the recovery threshold the probability refers to, seconds */
+  recoverBySec: number;
+}
+
+/**
+ * §17/§62 flagship: "68% chance of recovering ≥2 min".
+ *
+ * Given the current delay D (seconds) and our predicted arrival distribution
+ * at the final stop (p10/p50/p90 as epochs, ms), P(final_delay ≤ D − 120s)
+ * via the piecewise-linear quantile CDF. Suppressed (null) when there is
+ * nothing to recover (D ≤ 0) or the distribution is too thin to quote an
+ * honest percentage from (p90 − p10 > 1800s, GOAL §16 — no fake numbers).
+ */
+export function recoveryForecast(
+  currentDelaySec: number | null,
+  schedArrEpoch: number | null,
+  p10: number,
+  p50: number,
+  p90: number,
+  recoverBySec = 120,
+): RecoveryForecast | null {
+  if (currentDelaySec == null || schedArrEpoch == null) return null;
+  if (currentDelaySec <= 0) return null; // on time or early: nothing to recover
+  if (p90 - p10 > 1800_000) return null; // spread > 30 min → suppressed (§16)
+  const expectedDelaySec = Math.round((p50 - schedArrEpoch) / 1000);
+  const threshold = schedArrEpoch + (currentDelaySec - recoverBySec) * 1000;
+  return {
+    probRecover: Math.round(quantileCdf(threshold, p10, p50, p90) * 100) / 100,
+    expectedDelaySec,
+    basedOnQuantiles: true,
+    recoverBySec,
+  };
+}
+
 // MARK: - learned connection model (AUC-gated, hot-reloaded)
 
 let connModelCache: { mtime: number; model: { gbm: { base: number; lr: number; trees: unknown[] } } | null } | null = null;

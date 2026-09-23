@@ -804,8 +804,56 @@ function verifyParquetFile(path: string, cols: ColDef[], expected: Cell[][]): { 
 // ClickHouse path (a): server-side FORMAT Parquet streamed per partition.
 // ---------------------------------------------------------------------------
 
-/** Same 41 columns as the sqlite path, in the same order, same types. */
-const CH_SELECT = `
+/**
+ * Server-side ClickHouse export. Security posture: every SQL statement below
+ * is a compile-time string literal inlined at its call site; every runtime
+ * value (date filter, line filter, row limit) is passed through query_params
+ * ({name:Type} placeholders bound by the ClickHouse client) — no string
+ * derived from inputs is ever assembled into SQL text. lim binds 4294967295
+ * (UInt32 max) as "no limit"; allLines=1 disables the line filter, allLines=0
+ * with line='' selects NULL lines.
+ */
+async function exportFromClickhouse(client: ClickHouseClient, outRoot: string, opts: { date?: string; byLine: boolean; limit?: number }): Promise<void> {
+  // partition keys first, then one Parquet stream per partition
+  const datesRes = await client.query({
+    query: `SELECT DISTINCT r.service_date AS d
+            FROM predictions p
+            INNER JOIN prediction_outcomes o ON o.prediction_id = p.id
+            INNER JOIN train_runs r ON r.run_id = p.run_id
+            WHERE p.features_json IS NOT NULL AND p.features_json != '' AND p.sched_arr_epoch IS NOT NULL
+              AND ({date:String} = '' OR r.service_date = {date:String})
+            ORDER BY d`,
+    query_params: { date: opts.date ?? '' },
+    format: 'JSONEachRow',
+  });
+  const dates = (await datesRes.json<{ d: string }>()).map((r) => r.d);
+  let files = 0, totalBytes = 0, checkedRows = 0;
+  for (const d of dates) {
+    let lines: (string | null)[] = [null];
+    if (opts.byLine) {
+      const lr = await client.query({
+        query: `SELECT DISTINCT r.route_id AS l FROM predictions p
+                INNER JOIN prediction_outcomes o ON o.prediction_id = p.id
+                INNER JOIN train_runs r ON r.run_id = p.run_id
+                WHERE r.service_date = {date:String} AND p.features_json IS NOT NULL AND p.features_json != ''
+                  AND p.sched_arr_epoch IS NOT NULL ORDER BY l`,
+        query_params: { date: d },
+        format: 'JSONEachRow',
+      });
+      lines = [null, ...(await lr.json<{ l: string | null }>()).map((r) => r.l)];
+    }
+    for (const line of lines) {
+      const dir = join(outRoot, `service_date=${d}`, line == null ? '' : `line=${sanitize(line)}`);
+      const path = join(dir, 'part-0000.parquet');
+      mkdirSync(dirname(path), { recursive: true });
+      const params: Record<string, string | number> = {
+        date: d,
+        allLines: opts.byLine ? 0 : 1,
+        line: opts.byLine ? (line ?? '') : '',
+        lim: Math.max(0, Math.floor(opts.limit ?? 4_294_967_295)),
+      };
+      const res = await client.query({
+        query: `
   SELECT
     toString(r.service_date) AS service_date,
     r.train_number,
@@ -852,44 +900,15 @@ const CH_SELECT = `
   FROM predictions p
   INNER JOIN prediction_outcomes o ON o.prediction_id = p.id
   INNER JOIN train_runs r ON r.run_id = p.run_id
-  WHERE p.features_json IS NOT NULL AND p.features_json != '' AND p.sched_arr_epoch IS NOT NULL`;
-
-async function exportFromClickhouse(client: ClickHouseClient, outRoot: string, opts: { date?: string; byLine: boolean; limit?: number }): Promise<void> {
-  // partition keys first, then one FORMAT Parquet stream per partition
-  const datesRes = await client.query({
-    query: `SELECT DISTINCT r.service_date AS d
-            FROM predictions p
-            INNER JOIN prediction_outcomes o ON o.prediction_id = p.id
-            INNER JOIN train_runs r ON r.run_id = p.run_id
-            WHERE p.features_json IS NOT NULL AND p.features_json != '' AND p.sched_arr_epoch IS NOT NULL
-              AND ({date:String} = '' OR r.service_date = {date:String})
-            ORDER BY d`,
-    query_params: { date: opts.date ?? '' },
-    format: 'JSONEachRow',
-  });
-  const dates = (await datesRes.json<{ d: string }>()).map((r) => r.d);
-  const perDate = opts.byLine
-    ? `SELECT DISTINCT r.route_id AS l FROM predictions p
-       INNER JOIN prediction_outcomes o ON o.prediction_id = p.id
-       INNER JOIN train_runs r ON r.run_id = p.run_id
-       WHERE r.service_date = {date:String} AND p.features_json IS NOT NULL AND p.features_json != ''
-         AND p.sched_arr_epoch IS NOT NULL ORDER BY l`
-    : '';
-  let files = 0, totalBytes = 0, checkedRows = 0;
-  for (const d of dates) {
-    const lines: (string | null)[] = [null];
-    if (opts.byLine) {
-      const lr = await client.query({ query: perDate, query_params: { date: d }, format: 'JSONEachRow' });
-      lines.push(...(await lr.json<{ l: string | null }>()).map((r) => r.l));
-    }
-    for (const line of lines) {
-      const dir = join(outRoot, `service_date=${d}`, line == null ? '' : `line=${sanitize(line)}`);
-      const path = join(dir, 'part-0000.parquet');
-      mkdirSync(dirname(path), { recursive: true });
-      const limit = opts.limit != null ? ` LIMIT ${Math.max(0, Math.floor(opts.limit))}` : '';
-      const lineCond = opts.byLine ? ` AND (({line:String} = '' AND r.route_id IS NULL) OR r.route_id = nullIf({line:String}, ''))` : '';
-      const query = `${CH_SELECT} AND r.service_date = {date:String}${lineCond}${limit} ORDER BY p.id FORMAT Parquet`;
-      const res = await client.exec({ query, query_params: { date: d, line: line ?? '' } });
+  WHERE p.features_json IS NOT NULL AND p.features_json != '' AND p.sched_arr_epoch IS NOT NULL
+    AND r.service_date = {date:String}
+    AND ({allLines:UInt8} = 1 OR (({allLines:UInt8} = 0)
+        AND (({line:String} = '' AND r.route_id IS NULL) OR r.route_id = nullIf({line:String}, ''))))
+  ORDER BY p.id
+  LIMIT {lim:UInt64}`,
+        format: 'Parquet',
+        query_params: params,
+      });
       await pipeline(res.stream, createWriteStream(path));
       const bytes = statSync(path).size;
       files += 1;
@@ -913,9 +932,12 @@ function sanitize(s: string): string {
 async function exportFromSqlite(db: Db, outRoot: string, opts: { date?: string; byLine: boolean; limit?: number; rowsPerFile: number }): Promise<void> {
   const where = opts.date ? ' AND r.service_date = ?' : '';
   const order = opts.byLine ? ' ORDER BY r.service_date, r.route_id, p.id' : ' ORDER BY r.service_date, p.id';
-  const limit = opts.limit != null ? ` LIMIT ${Math.max(0, Math.floor(opts.limit))}` : '';
+  const limit = opts.limit != null ? ' LIMIT ?' : '';
   const stmt = db.prepare(`${SQLITE_SQL}${where}${order}${limit}`);
-  const iter = opts.date ? stmt.iterate(opts.date) : stmt.iterate();
+  const bindArgs: (string | number)[] = [];
+  if (opts.date) bindArgs.push(opts.date);
+  if (opts.limit != null) bindArgs.push(Math.max(0, Math.floor(opts.limit)));
+  const iter = stmt.iterate(...bindArgs);
 
   interface Group { dir: string; cols: Cell[][]; rows: number; }
   let current: Group | null = null;
@@ -981,6 +1003,11 @@ async function main(): Promise<void> {
     rowsPerFile: args.values['rows-per-file'] != null ? Number(args.values['rows-per-file']) : 100_000,
   };
   if (opts.limit != null && (!Number.isFinite(opts.limit) || opts.limit < 0)) throw new Error('--limit must be a non-negative integer');
+  if (opts.rowsPerFile < 1) throw new Error('--rows-per-file must be >= 1');
+  // strict input validation at the CLI boundary: date is YYYY-MM-DD (or absent);
+  // from here on, every value reaching a query is either a validated primitive
+  // bound via query_params or a compile-time SQL literal — never assembled text.
+  if (opts.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(opts.date)) throw new Error('--date must be YYYY-MM-DD');
 
   const source = (args.values.source ?? 'auto').toLowerCase();
   const chUrl = process.env.TRENO_CLICKHOUSE_URL;
@@ -1008,7 +1035,8 @@ async function main(): Promise<void> {
     await exportFromSqlite(db, outRoot, opts);
     db.close();
   }
-  console.log(`analyze with: duckdb -c "SELECT count(*) FROM read_parquet('${outRoot.replace(/'/g, '')}/**/*.parquet', hive_partitioning=true)"`);
+  console.log("analyze with: duckdb -c \"SELECT count(*) FROM read_parquet('<export-dir>/**/*.parquet', hive_partitioning=true)\"");
+  console.log(`  export dir: ${outRoot}`);
 }
 
 void main();

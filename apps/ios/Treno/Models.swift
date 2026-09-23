@@ -143,13 +143,48 @@ struct TrainDetail: Codable {
     let connections: [ConnectionOption]?
     let crowding: Crowding?
     let riskNotice: RiskNotice?
+    /// §17/§62 recovery forecast — absent when there is nothing to recover or
+    /// the prediction spread is too thin for an honest percentage.
+    var recovery: RecoveryForecast?
+    /// §48 likely area — absent when the run is not between points.
+    var likelyArea: LikelyArea?
 
     enum CodingKeys: String, CodingKey {
-        case id, trainNumber, serviceDate, state, stops, recentObservations, latestPrediction, connections, crowding, riskNotice
+        case id, trainNumber, serviceDate, state, stops, recentObservations, latestPrediction, connections, crowding, riskNotice, recovery, likelyArea
         case operatorName = "operator"
         case originStop = "origin"
         case destinationStop = "destination"
     }
+}
+
+/// §48 honest position: without GPS the train is never an exact dot, so the
+/// payload describes the stretch it is plausibly on — anchored at the last
+/// detected station or the last served stop, ending at the next scheduled
+/// stop. `detectedName`/`detectedAt` carry the last confirmed sighting (often
+/// a reporting point with no coordinates). Every field is optional: absence
+/// must never break decoding, only hide the presentation.
+struct LikelyArea: Codable, Hashable {
+    var fromStopId: String?
+    var fromName: String?
+    var fromLat: Double?
+    var fromLon: Double?
+    var toStopId: String?
+    var toName: String?
+    var toLat: Double?
+    var toLon: Double?
+    var detectedName: String?
+    var detectedAt: Double?
+    var ageSec: Int?
+}
+
+/// §17/§62: "68% chance of recovering ≥2 min" — P(delay at the arrival stop
+/// shrinks by at least `recoverBySec`), approximated by the server from the
+/// p10/p50/p90 arrival quantiles. Optional throughout: an absent or malformed
+/// value must never take the train page down.
+struct RecoveryForecast: Codable, Hashable {
+    var probRecover2m: Double?
+    var expectedDelaySec: Int?
+    var basedOnQuantiles: Bool?
 }
 
 /// MIA-reported load level (0–100 + operator label); absent when unavailable.

@@ -29,6 +29,12 @@ struct TrainDetailView: View {
                 if let detail {
                     if failed { TravelNotice(title: "Updates are unavailable", message: "Showing the last update. Pull down to try again.") }
                     hero(detail)
+                    // §48 likely area: the honest position under the
+                    // last-detected line in the hero — running trains with a
+                    // fresh sighting only; hides the moment either is missing.
+                    if let area = detail.likelyArea, detail.state?.status == "running", detail.state?.isFresh == true {
+                        LikelyAreaSection(area: area)
+                    }
                     if let ours = comparison.ours, detail.state?.status != "cancelled" {
                         estimateComparison(ours)
                     }
@@ -231,8 +237,15 @@ struct TrainDetailView: View {
                 Image(systemName: "tram.fill").foregroundStyle(.tPrimary)
                 Text(cleanOperator(detail.operatorName)).font(.subheadline.weight(.medium)).foregroundStyle(.tMuted)
                 Spacer()
-                Text(cancelled ? "Cancelled" : arrived ? "Arrived" : Fmt.delayShort(delayForStatus))
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(color)
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text(cancelled ? "Cancelled" : arrived ? "Arrived" : Fmt.delayShort(delayForStatus))
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(color)
+                    // §17/§62 recovery forecast: one inline chip, hidden when
+                    // the server suppressed it (nothing to recover / thin data)
+                    if let rec = detail.recovery, let prob = rec.probRecover2m, !arrived, !cancelled {
+                        RecoveryChip(probability: prob, expectedDelaySec: rec.expectedDelaySec)
+                    }
+                }
             }
             RouteEndpoints(from: fromName, to: toName)
             if cancelled {
@@ -354,6 +367,29 @@ struct TrainDetailView: View {
                 }
             }.background(Color.tCard, in: RoundedRectangle(cornerRadius: 22))
         }
+    }
+}
+
+/// §17/§62 recovery chip: "68% recovers ≥2m". The color carries the meaning
+/// (green when recovery is likely, amber when uncertain, muted when unlikely)
+/// and the chip disappears entirely when no honest probability exists.
+private struct RecoveryChip: View {
+    let probability: Double
+    var expectedDelaySec: Int? = nil
+
+    private var color: Color {
+        probability >= 0.6 ? .tGood : probability >= 0.35 ? .tLate : .tMuted
+    }
+
+    var body: some View {
+        let pct = Int((probability * 100).rounded())
+        Text("\(pct)% recovers ≥2m")
+            .font(.caption.weight(.semibold)).monospacedDigit()
+            .foregroundStyle(color)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+            .accessibilityLabel("Recovery forecast: \(pct) percent chance of recovering at least two minutes"
+                + (expectedDelaySec != nil ? ", expected \(Fmt.delay(expectedDelaySec)) at arrival" : ""))
     }
 }
 

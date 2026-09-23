@@ -196,8 +196,11 @@ GET /api/health                     providers + table counts + change rates
 GET /api/trains?q=&limit=           runs with fused state (incl. ourEstimate)
 GET /api/trains/:id                 run + stops + observations + latestPrediction + connections
                                     + locationInference (§83 rail-graph map matching)
+                                    + recovery (§17/§62, omitted when suppressed)
 GET /api/stops/search?q=
 GET /api/stops/:id/departures       today's board ±window with live state
+GET /api/journeys?from=&to=          direct options ranked by expected real arrival
+                                    (§19: expectedArrivalEpoch, riskPenaltySec, recommended)
 GET /api/segments                   segment statistics (top by sample count)
 GET /api/corridor?from=&to=         segment stats + live congestion delta
 GET /api/alerts                     recent provider alerts

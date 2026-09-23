@@ -33,6 +33,7 @@
     "quality:backfill": "tsx packages/collector/src/quality-backfill.ts",
     "retain": "tsx packages/storage/src/retention.ts",
     "ch:backfill": "tsx packages/storage/src/backfill-ch.ts",
+    "export:parquet": "tsx packages/storage/src/export-parquet.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

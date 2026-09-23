@@ -512,38 +512,6 @@ STALE_SOURCE 7,442 · SOURCE_CONFLICT 5,321 · DELAY_JUMP 24 — plus 212
 IMPOSSIBLE_RUNTIME stop events. Verified idempotent (second pass: 0 updates).
 
 
-## Source conflicts (2026-09-23)
-
-When MIA says +4 and ViaggiaTreno says +7, neither value is overwritten —
-per-source observation rows keep both (that was already true), and since
-2026-09-23 the disagreement itself is materialized as its own signal
-(GOAL §78): the intuition is that *sources disagreeing predicts instability*.
-
-- **Table** `source_conflicts` (SQLite schema + ClickHouse mirror DDL): one
-  row per detected disagreement — `run_id`, `ts` (the newer observation's
-  time), `field` (`delay_seconds` today; more fields can be added without a
-  migration), `value_a/value_b` with canonical alphabetical `source_a/source_b`
-  ordering (`mia` < `viaggiatreno`), `spread_seconds = |Δdelay|`.
-- **Rule** (`packages/collector/src/conflicts-backfill.ts`, one definition for
-  live + backfill): two per-source delay observations for the same run within
-  a **90s window** whose |Δdelay| is **> 120s** write a conflict row, deduped
-  to at most one row per run+field in any **5-minute** stretch. The live hook
-  runs in `pipeline.ts` `ingestSnapshot` right after the observation insert.
-- **Backfill** — replay the identical rule over stored history (idempotent;
-  existing rows, live or from a previous run, seed the dedup):
-  ```
-  npm run conflicts:backfill        # local
-  docker compose run --rm collector npx tsx packages/collector/src/conflicts-backfill.ts   # server
-  ```
-- **Feature** `delay_source_spread` (FeatureInput `delaySourceSpreadSec`):
-  the latest conflict spread at or before the prediction instant, `0` when the
-  sources agree — point-in-time safe (`ts <=` prediction time, the same
-  discipline as the other context features). New predictions record it into
-  `features_json`; historical prediction rows get it recomputed the same way
-  at train time (`train.ts` `extract()`), so the nightly retrain sees it
-  across the whole window without a re-ingest. Append-only like every feature:
-  the serving model ignores it until a retrain picks it up.
-
 ## Event calendar — strikes, stadium fixtures, holidays (2026-09-18)
 
 Exogenous event features for the model (GOAL §51 context + propagation

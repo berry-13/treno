@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { runStmt, getRow, getRows, type Db } from '#core/db.ts';
 import { ch } from './clickhouse.ts';
+import { railLocationKey, upsertRailLocation } from './railLocations.ts';
 
 /** epoch-ms → Date for ClickHouse DateTime64(3) columns (null stays null). */
 function d(ms: number | null | undefined): Date | null {
@@ -43,6 +44,16 @@ export function insertObservation(db: Db, a: ObservationArgs): void {
     quality_flags: a.qualityFlags && a.qualityFlags.length > 0 ? JSON.stringify(a.qualityFlags) : null,
     crowding_pct: a.crowdingPct ?? null, crowding_label: a.crowdingLabel ?? null,
   });
+  // §82: every non-null reported location feeds the rail_locations registry
+  // (reporting points AND stations — typing happens in railLocations.ts, a
+  // gtfs-matched PASSENGER_STATION is never demoted by the name classifier).
+  if (a.locationName != null && a.locationName.trim() !== '') {
+    upsertRailLocation(db, {
+      key: railLocationKey(a.locationName),
+      name: a.locationName,
+      seenAt: a.observedAt ?? a.ts,
+    });
+  }
 }
 
 export interface StopEventUpsert {

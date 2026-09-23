@@ -174,9 +174,34 @@ GET /api/stops/:id/departures       today's board ±window with live state
 GET /api/segments                   segment statistics (top by sample count)
 GET /api/corridor?from=&to=         segment stats + live congestion delta
 GET /api/alerts                     recent provider alerts
+GET /api/rail-locations             reporting-point registry with counts (§82)
 GET /api/atm/stops/:id              ATM stop observations (when enabled)
 GET /                                web debug page
 ```
+
+## Railway reporting points (§82)
+
+Providers report trains at plenty of locations that are not passenger stops —
+`Bivio Casirate`, `PM Albate`, `DEV. ESTR. ROGOREDO`, border points like
+`CONFINE ITALO/SVIZZERO`. These now live as a first-class entity, separate
+from `gtfs_stops` (which remains the canonical home of passenger stations):
+
+- `rail_locations` (SQLite + ClickHouse mirror DDL) — one row per location
+  name slug (`railLocationKey('BIVIO/PC SESIA')` = `bivio-pc-sesia`), with
+  `type` (`PASSENGER_STATION` | `JUNCTION` | `BIVIO` | `CONTROL_POINT` |
+  `UNKNOWN_REPORTING_POINT`), optional `lat`/`lon`, and observation stats
+  (`first_seen`, `last_seen`, `observation_count`).
+- Classification is pure and offline (`classifyLocationName`): `bivio` →
+  BIVIO, `diramazione`/`giunzione` → JUNCTION, else UNKNOWN_REPORTING_POINT.
+  Passenger stations are typed by matching reported location ids and
+  normalized names against `gtfs_stops` — matched rows also pick up the gtfs
+  coordinates. No geocoding or API calls: unknown coordinates stay NULL.
+- Every `insertObservation` with a non-null `location_name` updates the
+  stats; `npm run raillocations:backfill` rebuilds the table from the full
+  observation history (idempotent — clears first) and prints the type
+  histogram plus top locations by observation count.
+- Ops can inspect via `GET /api/rail-locations?type=&limit=` (heaviest
+  evidence first), which is also the stable read path for §83 map matching.
 
 ## Source etiquette (§57)
 

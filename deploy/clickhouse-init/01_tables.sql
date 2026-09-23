@@ -111,3 +111,20 @@ CREATE TABLE IF NOT EXISTS source_snapshots (
 -- crowding (GOAL.md §53), added 2026-09-19 — additive migration for existing installs
 ALTER TABLE train_observations ADD COLUMN IF NOT EXISTS crowding_pct Nullable(Int32);
 ALTER TABLE train_observations ADD COLUMN IF NOT EXISTS crowding_label Nullable(String);
+
+-- railway reporting points (GOAL.md §82), added 2026-09-23 — additive.
+-- Observation-driven registry of every location providers report (junctions,
+-- bivi, control posts, border points; matched passenger stops typed as such).
+-- SQLite is the operational truth; this analytical mirror can be populated
+-- by a later ch:backfill pass if §83 map matching needs it.
+CREATE TABLE IF NOT EXISTS rail_locations (
+  key String,
+  name Nullable(String),
+  type LowCardinality(String),
+  lat Nullable(Float64),
+  lon Nullable(Float64),
+  first_seen Nullable(DateTime64(3)),
+  last_seen Nullable(DateTime64(3)),
+  observation_count UInt64,
+  updated_at DateTime64(3)
+) ENGINE = ReplacingMergeTree(updated_at) ORDER BY (key);

@@ -9,6 +9,7 @@
  *   GET /api/trains/:id              full run: schedule, stop events, state
  *   GET /api/stops/search?q=
  *   GET /api/stops/:id/departures   today's board with live state
+ *   GET /api/rail-locations         reporting-point registry with counts (§82)
  */
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -23,6 +24,7 @@ import { searchStops, stopById, stopDepartures, type StopDeparture } from '#gtfs
 import { atmSearchStops, atmStopById, atmStopDepartures } from '#gtfs/atm.ts';
 import { decodeWaitMessage } from '#providers/atm.ts';
 import { providerHealth } from '#storage/observations.ts';
+import { listRailLocations } from '#storage/railLocations.ts';
 import { segmentStatsTable, corridorDelta, segmentId as segId } from '#storage/segments.ts';
 import { connectionOptions } from '#collector/heuristic.ts';
 import { predictPlatforms } from '#collector/train-platforms.ts';
@@ -433,6 +435,17 @@ export function buildApp(db: Db) {
   app.get('/api/alerts', (c) => {
     const since = Date.now() - 24 * 3600_000;
     return c.json(getRows(db, 'SELECT id, source, run_id, title, description, severity, created_at FROM service_alerts WHERE created_at >= ? ORDER BY created_at DESC LIMIT 100', [since]));
+  });
+
+  // §82 railway reporting points: registry of every location providers report
+  // (bivi, junctions, control posts, border points — plus passenger stations
+  // typed as such), heaviest observation evidence first
+  app.get('/api/rail-locations', (c) => {
+    const type = (c.req.query('type') ?? '').trim().toUpperCase();
+    const limit = Math.min(Number(c.req.query('limit') ?? 200), 1000);
+    let rows = listRailLocations(db);
+    if (type !== '') rows = rows.filter((r) => r.type === type);
+    return c.json({ count: rows.length, locations: rows.slice(0, limit) });
   });
 
   app.get('/api/atm/stops/:id', (c) => {

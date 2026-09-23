@@ -56,4 +56,11 @@ export function ensureNormalizedTables(db: Db): void {
   // values implement the rate limits; a rule fires only when its value moved)
   db.exec(`CREATE TABLE IF NOT EXISTS devices(token TEXT PRIMARY KEY, created_at INTEGER NOT NULL, last_seen_at INTEGER)`);
   db.exec(`CREATE TABLE IF NOT EXISTS device_watches(token TEXT NOT NULL, run_id INTEGER NOT NULL, eta_p50_notified INTEGER, cancelled_notified INTEGER DEFAULT 0, risk_notified INTEGER DEFAULT 0, last_notified_at INTEGER DEFAULT 0, PRIMARY KEY(token, run_id))`);
+  // §82 railway reporting points: non-passenger locations providers report
+  // trains at ('Bivio Casirate', 'PM Albate', ...) as a first-class entity,
+  // separate from passenger stops (gtfs_stops stays their canonical home;
+  // matched ones are typed PASSENGER_STATION here — see railLocations.ts).
+  // key = slug(location_name), lowercase-hyphenated. lat/lon stay NULL
+  // unless known offline (gtfs coords for matched stations) — no geocoding.
+  db.exec(`CREATE TABLE IF NOT EXISTS rail_locations(key TEXT PRIMARY KEY, name TEXT, type TEXT CHECK(type IN ('PASSENGER_STATION','JUNCTION','BIVIO','CONTROL_POINT','UNKNOWN_REPORTING_POINT')), lat REAL, lon REAL, first_seen INTEGER, last_seen INTEGER, observation_count INTEGER, updated_at INTEGER)`);
 }

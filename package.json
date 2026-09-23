@@ -25,6 +25,7 @@
     "train:connections": "tsx packages/collector/src/train-connections.ts",
     "backfill:monechi": "tsx packages/collector/src/backfill-monechi.ts",
     "backfill:crowding": "tsx packages/collector/src/backfill-crowding.ts",
+    "raillocations:backfill": "tsx packages/collector/src/raillocations-backfill.ts",
     "train:platforms": "tsx packages/collector/src/train-platforms.ts",
     "train:sweep": "tsx packages/collector/src/train-sweep.ts",
     "atm:latent-study": "tsx packages/collector/src/atm-latent-study.ts",

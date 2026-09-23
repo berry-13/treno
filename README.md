@@ -569,15 +569,73 @@ the run's next stop, last 45 min). Manual import:
 `npx tsx packages/collector/src/events.ts` (or `docker compose run --rm
 collector npx tsx packages/collector/src/events.ts` on the server).
 
+## Risk notices — §51 propagation, tunable generator + nightly sweep (2026-09-23)
+
+The pre-emptive "delays building ahead of your train" notice (GOAL §51) is a
+parameterized corridor rule in `packages/collector/src/heuristic.ts`. All
+thresholds live in ONE exported config, `RiskNoticeConfig`:
+
+- `minPrecedingTrains` — how many preceding-train traversals the upcoming
+  corridor segments must show inside the window (default 2).
+- `evidenceWindowMin` — evidence lookback in minutes (default 20).
+- `minMedianRuntimeDeltaSec` — the median runtime delta across those
+  traversals must reach this (default 90s). Median, not per-train floor: a
+  corridor where most trains still run on time cannot fire off one outlier —
+  that is the precision direction the ≥70% gate demands.
+- `minP50MoveSec` — our own p50 must already project this much lateness
+  (default 60s); the notice is a *this will get worse* claim, so it only
+  fires when the model already sees a move.
+- Toggleable candidates, each with a causal story:
+  - `requirePersistence` — the corridor deviation must be present in 2
+    consecutive refreshes (an in-memory last-refresh snapshot per run; a
+    transient blip in one refresh should not fire a push).
+  - `weightSevereEvidence` — a preceding train that is cancelled or >10 min
+    late counts double (a cancellation is the strongest propagation
+    evidence there is).
+  - `adaptiveWindow` — 1.5x wider evidence window at Rome rush hours
+    (7–9 / 17–19), where headways are short and affected trains accrue
+    faster.
+
+The live trigger (`pipeline.ts` → push notifications and state) evaluates
+this rule from recorded per-prediction features
+(`corridorEvidenceTrains`, `corridorSevereTrains`,
+`corridorCancelledTrains`, `corridorMedianDeltaSec`,
+`corridorEvidencePersisted` — append-only in `features_json`, so future
+replays never need to recompute them).
+
+The precision gate is deliberately NOT in the config: `MIN_PRECISION_TARGET
+= 0.7` is a constant in `backtest.ts`. Tuning evidence thresholds is the
+legitimate lever; moving the gate is not.
+
+**Nightly tuning loop.** `npm run backtest` (trainer role, 03:30 Rome) now
+prints, after the unchanged single-config §51 replay and its gate line, a
+`risk-notice generator threshold sweep (§51)` section: a 27-point grid over
+(minPrecedingTrains × evidenceWindowMin × minMedianRuntimeDeltaSec) plus the
+candidate toggles at default thresholds, each with fired / precision /
+recall, evidence rebuilt point-in-time from `segment_observation` /
+`train_stop_events` (only rows at or before each prediction instant). It
+ends with a chosen default — the gate-passing config with the best recall,
+ties broken toward more conservative thresholds — and the exact
+`TRENO_RISK_NOTICE_CONFIG` JSON to apply. Read it at
+`curl http://<server>:8787/api/backtest`.
+
+**Applying a tuned config** (no code change): set the collector env
+```
+TRENO_RISK_NOTICE_CONFIG='{"minPrecedingTrains":3,"evidenceWindowMin":45,"minMedianRuntimeDeltaSec":90}'
+```
+(unknown keys / malformed JSON fall back to the code defaults, never widen).
+Defaults = the shipped behavior; change them only from a sweep result.
+
 ## Configuration (env)
 
 ```
-TRENO_DATA_DIR       default <repo>/data
-TRENO_USER_AGENT     default identifies this collector
-TRENO_API_PORT       default 8787
-TRENO_MAX_TRACKED    default 80 concurrent runs
-TRENO_MIN_POLL_SEC   default 20 (per-entity floor)
-TRENO_GTFS_URL       default dati.lombardia.it 3z4k-mxz9 download
+TRENO_DATA_DIR            default <repo>/data
+TRENO_USER_AGENT          default identifies this collector
+TRENO_API_PORT            default 8787
+TRENO_MAX_TRACKED         default 80 concurrent runs
+TRENO_MIN_POLL_SEC        default 20 (per-entity floor)
+TRENO_GTFS_URL            default dati.lombardia.it 3z4k-mxz9 download
+TRENO_RISK_NOTICE_CONFIG  default unset — §51 risk-notice thresholds (JSON, see above)
 ```
 
 ## Server deployment (Docker + ClickHouse)

@@ -15,7 +15,7 @@ import { healthSnapshot, resolveTrust, type FusedProvenancePick } from './trust.
 import { deriveSegmentObservations } from '#storage/segments.ts';
 import { notifyWatchers } from './notifications.ts';
 import { recordSourceConflict } from './conflicts-backfill.ts';
-import { predictHeuristic, recoveryPrediction, HEURISTIC_MODEL_VERSION } from './heuristic.ts';
+import { predictHeuristic, recoveryPrediction, HEURISTIC_MODEL_VERSION, riskNoticeFromFeatures } from './heuristic.ts';
 import { applyResidual, getResidualModel, routeEncodingFor, type FeatureInput } from './model.ts';
 import type { ProviderStopEvent, ProviderTrainSnapshot } from '#providers/types.ts';
 import type { SnapshotInfo } from '#storage/rawStore.ts';
@@ -61,7 +61,7 @@ export function ingestSnapshot(db: Db, s: ProviderTrainSnapshot, meta: IngestMet
   if (meta.snapshot.changed) {
     // §45 quality flags: cheap per-row rules (OUT_OF_ORDER, STALE_SOURCE,
     // DELAY_JUMP) vs the previous same-source observation; the whole-run
-    // rules (SOURCE_CONFLICT, BACKWARDS_TELEPORT, ...) are recomputed by
+    // rules (SOURCE_CONFLICT, BACKWARDS_TELESPORT, ...) are recomputed by
     // `npm run quality:backfill`
     const flags = ingestRowFlags(db, {
       runId,
@@ -472,7 +472,17 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
     status: state.status,
     trainNumber: state.trainNumber,
     ourEstimate: state.ourEstimate ? { p50: state.ourEstimate.p50 } : null,
-    riskNotice: prediction && (prediction.features.upstreamStopDelayedCount ?? 0) >= 2 ? { upstream: true } : null,
+    // §51 risk notice: the parameterized corridor rule from heuristic.ts
+    // (thresholds in RiskNoticeConfig / TRENO_RISK_NOTICE_CONFIG — the same
+    // rule the nightly replay sweep measures). This supersedes the old
+    // inline `upstreamStopDelayedCount >= 2` push flag: the recorded
+    // upstream features are untouched (they keep feeding the model), but the
+    // notice itself now needs corridor evidence AND a projected p50 move,
+    // which is the precision direction the ≥70% gate demands
+    riskNotice: prediction && riskNoticeFromFeatures(
+      prediction.features,
+      state.schedArrEpoch != null ? (prediction.p50 - state.schedArrEpoch) / 1000 : null,
+    ) ? { upstream: true } : null,
   });
 
   if (prediction && state.destination.stopId) {

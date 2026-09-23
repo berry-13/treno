@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { loadConfig } from '#core/config.ts';
 import { predictGBM } from './gbm.ts';
 import { connectionRow } from './train-connections.ts';
-import { statsForSegment, corridorDelta, segmentId } from '#storage/segments.ts';
+import { statsForSegment, corridorDelta, segmentId, quantile } from '#storage/segments.ts';
 import type { RunRecord } from '#storage/runs.ts';
 import type { FusedState } from './pipeline.ts';
 import { currentPrecipMm, precipSource } from './weather.ts';
@@ -70,6 +70,15 @@ export interface HeuristicPrediction {
     routeId: string | null;                    // line identity (P4 target-encoding key)
     etaAccelSec: number | null;                // 2nd-order operator-ETA movement (sec per 5min²)
     delaySourceSpreadSec: number | null;       // §78: latest materialized MIA-vs-VT delay disagreement at or before now (0 = agreement); stored to features_json for training
+    // §51 propagation corridor evidence for the risk-notice generator
+    // (point-in-time, default config; recorded so nightly replays can sweep
+    // thresholds without recomputing history — append-only, the residual
+    // model ignores unknown keys)
+    corridorEvidenceTrains: number | null;     // preceding trains observed on the upcoming segments in the evidence window
+    corridorSevereTrains: number | null;       // of those, trains >10 min late (double-weight candidate (b))
+    corridorCancelledTrains: number | null;    // trains cancelled at the next stop in the window (strongest propagation evidence)
+    corridorMedianDeltaSec: number | null;     // median runtime delta across those traversals (the corridor deviation)
+    corridorEvidencePersisted: number | null;  // 1/0: same deviation present at the previous refresh too (candidate (a)); null when persistence tracking is off
   };
 }
 
@@ -188,6 +197,7 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
       const nextStopId = events[anchorIdx >= 0 ? anchorIdx + 1 : 0]?.stop_id ?? null;
       const up = upstreamFeatures(db, nextStopId);
       const vel = operatorEtaVelocity(db, run.id);
+      const corridorEv = liveCorridorEvidence(db, run.id, events);
       return {
         anchorKind,
         anchorStopId: anchorIdx >= 0 ? events[anchorIdx]!.stop_id : null,
@@ -213,6 +223,11 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
         routeId: run.route_id,
         etaAccelSec: vel.accelSec,
         delaySourceSpreadSec: latestConflictSpread(db, run.id, Date.now()),
+        corridorEvidenceTrains: corridorEv.evidence.trains,
+        corridorSevereTrains: corridorEv.evidence.severeTrains,
+        corridorCancelledTrains: corridorEv.evidence.cancelledTrains,
+        corridorMedianDeltaSec: corridorEv.evidence.medianRuntimeDeltaSec,
+        corridorEvidencePersisted: corridorEv.persisted,
       };
     })(),
   };
@@ -304,6 +319,322 @@ export function recoveryPrediction(state: FusedState, p50: number): number | nul
   if (schedArr == null || current == null) return null;
   const expectedAtDest = (p50 - schedArr) / 1000;
   return Math.round(current - expectedAtDest);
+}
+
+// MARK: - §51 risk-notice generator (configurable)
+
+/**
+ * Pre-emptive "delays building ahead of your train" notice (GOAL.md §51).
+ *
+ * Rule: the run's upcoming corridor segments show ≥ minPrecedingTrains
+ * preceding-train traversals inside the evidence window whose MEDIAN runtime
+ * delta reaches minMedianRuntimeDeltaSec, and our own p50 already projects
+ * ≥ minP50MoveSec of lateness. Every threshold lives in ONE exported config
+ * so the nightly replay sweep can measure and the operator can tune each
+ * knob independently; the precision gate itself is deliberately NOT here
+ * (it is a constant in backtest.ts — tuning evidence thresholds is the
+ * legitimate lever, moving the gate is not).
+ *
+ * Defaults reproduce the shipped live trigger (≥2 traversals losing >90s
+ * within 20 min + p50 ≥60s late). One deliberate nuance: the delta gate is
+ * the median across traversals rather than a per-train floor, so a corridor
+ * where most trains still run on time cannot fire off one outlier — that is
+ * the precision direction the gate wants.
+ */
+export interface RiskNoticeConfig {
+  /** minimum preceding trains observed losing time in the evidence window */
+  minPrecedingTrains: number;
+  /** lookback window for preceding-train evidence, minutes */
+  evidenceWindowMin: number;
+  /** median runtime delta across evidence traversals must reach this (sec) */
+  minMedianRuntimeDeltaSec: number;
+  /** our p50 must already project at least this much lateness (sec) */
+  minP50MoveSec: number;
+  /** (a) require the corridor deviation present in 2 consecutive refreshes */
+  requirePersistence: boolean;
+  /** (b) a preceding train cancelled or >10 min late counts double */
+  weightSevereEvidence: boolean;
+  /** (c) widen the evidence window at peak hours (7–9 / 17–19 Rome) */
+  adaptiveWindow: boolean;
+}
+
+/** Current behavior — the shipped §51 trigger. */
+export const DEFAULT_RISK_NOTICE_CONFIG: RiskNoticeConfig = {
+  minPrecedingTrains: 2,
+  evidenceWindowMin: 20,
+  minMedianRuntimeDeltaSec: 90,
+  minP50MoveSec: 60,
+  requirePersistence: false,
+  weightSevereEvidence: false,
+  adaptiveWindow: false,
+};
+
+/** a preceding train >10 min late (or cancelled) is qualitatively different
+ *  evidence than one running 2 min down — candidate (b) weights it double */
+const SEVERE_LATE_SEC = 600;
+/** peak multiplier for candidate (c): headways are shortest at peak, so the
+ *  same number of affected trains accrues faster — a wider window keeps the
+ *  per-window train count comparable across the day */
+const ADAPTIVE_PEAK_WINDOW_FACTOR = 1.5;
+/** two refreshes count as "consecutive" only if they are this close */
+export const PERSISTENCE_MAX_GAP_MS = 15 * 60_000;
+
+let liveRiskCfgCache: { raw: string | null; cfg: RiskNoticeConfig } | null = null;
+
+/**
+ * Live config = code defaults overridden by TRENO_RISK_NOTICE_CONFIG (JSON),
+ * so an operator can act on a sweep result without a code change:
+ *   TRENO_RISK_NOTICE_CONFIG='{"minPrecedingTrains":3,"minMedianRuntimeDeltaSec":120}'
+ * Unknown keys and malformed JSON fall back to the defaults (never widen).
+ */
+export function loadRiskNoticeConfig(): RiskNoticeConfig {
+  const raw = process.env.TRENO_RISK_NOTICE_CONFIG ?? null;
+  if (liveRiskCfgCache && liveRiskCfgCache.raw === raw) return liveRiskCfgCache.cfg;
+  const merged: Record<string, number | boolean> = { ...DEFAULT_RISK_NOTICE_CONFIG };
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      for (const [k, v] of Object.entries(parsed)) {
+        if (!(k in merged)) continue;
+        if (typeof v === typeof merged[k] && (typeof v === 'number' || typeof v === 'boolean')) merged[k] = v;
+      }
+    } catch { /* malformed override: keep defaults */ }
+  }
+  const cfg = merged as unknown as RiskNoticeConfig;
+  liveRiskCfgCache = { raw, cfg };
+  return cfg;
+}
+
+/** Rome-local rush hours for candidate (c) (7–9 / 17–19). */
+export function isRushHourRome(epochMs: number): boolean {
+  const h = Number(new Date(epochMs).toLocaleString('en-GB', { timeZone: 'Europe/Rome', hour: 'numeric', hour12: false })) || 12;
+  return (h >= 7 && h < 9) || (h >= 17 && h < 19);
+}
+
+/** Window actually applied for a prediction instant (minutes). */
+export function effectiveEvidenceWindowMin(cfg: RiskNoticeConfig, asOfMs: number): number {
+  return cfg.adaptiveWindow && isRushHourRome(asOfMs)
+    ? Math.round(cfg.evidenceWindowMin * ADAPTIVE_PEAK_WINDOW_FACTOR)
+    : cfg.evidenceWindowMin;
+}
+
+/** Minimal stop shape the §51 scope needs (both live and replay stops fit). */
+export interface RiskNoticeStop {
+  stop_id: string;
+  actual_arr_epoch?: number | null;
+  actual_dep_epoch?: number | null;
+  cancelled?: number | null;
+}
+
+export interface RiskNoticeSegmentScope {
+  segmentIds: string[];
+  nextStopId: string | null;
+}
+
+/**
+ * Which corridor the notice looks at: the segments around the first stop the
+ * run has not yet served at `asOfMs` — one behind (the approach) plus the
+ * next three ahead, mirroring the served API rule. For live calls (asOf =
+ * now) the final-actual reconstruction below is a no-op; for replays it
+ * recreates the point-in-time "not yet served" set from final actuals.
+ */
+export function riskNoticeScope(stops: RiskNoticeStop[], asOfMs: number): RiskNoticeSegmentScope {
+  const notYetServed = (s: RiskNoticeStop): boolean => {
+    if (s.cancelled === 1) return false;
+    const a = s.actual_arr_epoch ?? null;
+    const d = s.actual_dep_epoch ?? null;
+    if (a == null && d == null) return true; // never served (as far as recorded)
+    const served = Math.min(...[a, d].filter((x): x is number => x != null));
+    return served > asOfMs; // replay only: actual arrived after the prediction instant
+  };
+  let firstUpcoming = stops.findIndex(notYetServed);
+  if (firstUpcoming < 0) return { segmentIds: [], nextStopId: null };
+  const segmentIds: string[] = [];
+  for (let i = Math.max(0, firstUpcoming - 1); i + 1 < stops.length && i < firstUpcoming + 3; i++) {
+    segmentIds.push(segmentId(stops[i]!.stop_id, stops[i + 1]!.stop_id));
+  }
+  return { segmentIds, nextStopId: stops[firstUpcoming]!.stop_id };
+}
+
+/** Aggregated corridor evidence — config-free aggregate so replays can cache
+ *  it per window and evaluate many configs cheaply. */
+export interface RiskNoticeEvidence {
+  /** distinct preceding-train traversals in the window (raw count) */
+  trains: number;
+  /** of those, traversals by trains >10 min late (entry or exit) */
+  severeTrains: number;
+  /** trains cancelled at the next stop in the window (never traversed) */
+  cancelledTrains: number;
+  /** median runtime delta across the traversals (sec) — the corridor deviation */
+  medianRuntimeDeltaSec: number | null;
+  /** worst single runtime delta (sec) */
+  maxRuntimeDeltaSec: number | null;
+  /** window the aggregate covers (minutes) */
+  windowMin: number;
+  /** segment with the worst per-segment median delta */
+  worstSegmentId: string | null;
+}
+
+export interface RiskEvidenceTraversal {
+  segment_id: string;
+  entered_at: number;
+  delay_delta_sec: number | null;
+  entry_delay_sec: number | null;
+  exit_delay_sec: number | null;
+}
+
+/** Weighted count under candidate (b): severe/cancelled trains count double. */
+export function weightedEvidenceTrains(evidence: RiskNoticeEvidence, cfg: RiskNoticeConfig): number {
+  return cfg.weightSevereEvidence
+    ? evidence.trains + evidence.severeTrains + evidence.cancelledTrains
+    : evidence.trains;
+}
+
+/** Median runtime delta a traversal set represents (null when empty). */
+export function aggregateRiskNoticeEvidence(
+  traversals: RiskEvidenceTraversal[],
+  cancelledTrains: number,
+  windowMin: number,
+): RiskNoticeEvidence {
+  const seen = traversals.filter((t) => t.delay_delta_sec != null);
+  const deltas = seen.map((t) => t.delay_delta_sec!);
+  const perSegment = new Map<string, number[]>();
+  for (const t of seen) {
+    const list = perSegment.get(t.segment_id) ?? [];
+    list.push(t.delay_delta_sec!);
+    perSegment.set(t.segment_id, list);
+  }
+  let worstSegmentId: string | null = null;
+  let worstMedian = -Infinity;
+  for (const [segId, ds] of perSegment) {
+    const med = quantile([...ds].sort((a, b) => a - b), 0.5) ?? -Infinity;
+    if (med > worstMedian) { worstMedian = med; worstSegmentId = segId; }
+  }
+  const severe = seen.filter((t) => Math.max(t.entry_delay_sec ?? 0, t.exit_delay_sec ?? 0) >= SEVERE_LATE_SEC).length;
+  return {
+    trains: seen.length,
+    severeTrains: severe,
+    cancelledTrains,
+    medianRuntimeDeltaSec: deltas.length > 0 ? quantile([...deltas].sort((a, b) => a - b), 0.5) : null,
+    maxRuntimeDeltaSec: deltas.length > 0 ? Math.max(...deltas) : null,
+    windowMin,
+    worstSegmentId,
+  };
+}
+
+/**
+ * The generator's decision. Pure: given the corridor evidence, our projected
+ * lateness and a config, should the notice fire? `persisted` (candidate (a))
+ * is tri-state — null when persistence is not being checked.
+ */
+export function riskNoticeFires(
+  evidence: RiskNoticeEvidence,
+  ourP50DelaySec: number | null,
+  cfg: RiskNoticeConfig,
+  persisted: boolean | null = null,
+): boolean {
+  if (weightedEvidenceTrains(evidence, cfg) < cfg.minPrecedingTrains) return false;
+  if (evidence.medianRuntimeDeltaSec == null || evidence.medianRuntimeDeltaSec < cfg.minMedianRuntimeDeltaSec) return false;
+  if (ourP50DelaySec == null || ourP50DelaySec < cfg.minP50MoveSec) return false;
+  if (cfg.requirePersistence && persisted !== true) return false;
+  return true;
+}
+
+/**
+ * Evidence for one prediction instant straight from the tables
+ * (point-in-time when asOfMs < now: only traversals entered at or before the
+ * instant count). Two cheap queries.
+ */
+export function precedingTrainEvidence(
+  db: Db,
+  scope: RiskNoticeSegmentScope,
+  opts: { asOfMs: number; cfg: RiskNoticeConfig },
+): RiskNoticeEvidence {
+  const windowMin = effectiveEvidenceWindowMin(opts.cfg, opts.asOfMs);
+  if (scope.segmentIds.length === 0) {
+    return { trains: 0, severeTrains: 0, cancelledTrains: 0, medianRuntimeDeltaSec: null, maxRuntimeDeltaSec: null, windowMin, worstSegmentId: null };
+  }
+  const since = opts.asOfMs - windowMin * 60_000;
+  const ph = scope.segmentIds.map(() => '?').join(',');
+  const traversals = getRows<RiskEvidenceTraversal>(
+    db,
+    `SELECT segment_id, entered_at, delay_delta_sec, entry_delay_sec, exit_delay_sec
+     FROM segment_observation WHERE segment_id IN (${ph}) AND entered_at >= ? AND entered_at <= ? AND delay_delta_sec IS NOT NULL`,
+    [...scope.segmentIds, since, opts.asOfMs],
+  );
+  let cancelled = 0;
+  if (scope.nextStopId != null) {
+    const c = getRow<{ n: number }>(
+      db,
+      'SELECT COUNT(*) AS n FROM train_stop_events WHERE stop_id=? AND cancelled=1 AND actual_dep_epoch IS NULL AND sched_dep_epoch >= ? AND sched_dep_epoch <= ?',
+      [scope.nextStopId, since, opts.asOfMs],
+    );
+    cancelled = c?.n ?? 0;
+  }
+  return aggregateRiskNoticeEvidence(traversals, cancelled, windowMin);
+}
+
+/**
+ * Live evaluation state for one run: evidence at the default/live config
+ * plus the last-refresh persistence flag (candidate (a)). The §51 features
+ * recorded into features_json come from here.
+ */
+export interface LiveCorridorEvidence {
+  evidence: RiskNoticeEvidence;
+  persisted: number | null;
+}
+
+/** In-memory last-refresh snapshot per run — segment stats history is not
+ *  stored per refresh, so persistence is remembered where the corridor is
+ *  computed (additive: absent these calls nothing is retained). */
+const riskNoticeRefreshMemory = new Map<number, { ts: number; medianDeltaSec: number | null; trains: number }>();
+
+function liveCorridorEvidence(db: Db, runId: number, events: StopEventLite[]): LiveCorridorEvidence {
+  const cfg = loadRiskNoticeConfig();
+  const now = Date.now();
+  const scope = riskNoticeScope(events, now);
+  const evidence = precedingTrainEvidence(db, scope, { asOfMs: now, cfg });
+  let persisted: number | null = null;
+  if (cfg.requirePersistence) {
+    const prev = riskNoticeRefreshMemory.get(runId) ?? null;
+    if (prev != null && now - prev.ts <= PERSISTENCE_MAX_GAP_MS) {
+      persisted = prev.medianDeltaSec != null && prev.medianDeltaSec >= cfg.minMedianRuntimeDeltaSec ? 1 : 0;
+    }
+  }
+  riskNoticeRefreshMemory.set(runId, { ts: now, medianDeltaSec: evidence.medianRuntimeDeltaSec, trains: evidence.trains });
+  if (riskNoticeRefreshMemory.size > 4096) {
+    for (const [k, v] of riskNoticeRefreshMemory) if (now - v.ts > 30 * 60_000) riskNoticeRefreshMemory.delete(k);
+  }
+  return { evidence, persisted };
+}
+
+/** Feature shape consumed by the live trigger (also what replay reads back). */
+export interface RiskNoticeFeatures {
+  corridorEvidenceTrains?: number | null;
+  corridorSevereTrains?: number | null;
+  corridorCancelledTrains?: number | null;
+  corridorMedianDeltaSec?: number | null;
+  corridorEvidencePersisted?: number | null;
+}
+
+/** Live trigger for pipeline/notifications: the parameterized rule applied to
+ *  the recorded §51 features of a prediction. */
+export function riskNoticeFromFeatures(
+  f: RiskNoticeFeatures,
+  ourP50DelaySec: number | null,
+  cfg: RiskNoticeConfig = loadRiskNoticeConfig(),
+): boolean {
+  const evidence: RiskNoticeEvidence = {
+    trains: f.corridorEvidenceTrains ?? 0,
+    severeTrains: f.corridorSevereTrains ?? 0,
+    cancelledTrains: f.corridorCancelledTrains ?? 0,
+    medianRuntimeDeltaSec: f.corridorMedianDeltaSec ?? null,
+    maxRuntimeDeltaSec: null,
+    windowMin: cfg.evidenceWindowMin,
+    worstSegmentId: null,
+  };
+  const persisted = f.corridorEvidencePersisted != null ? f.corridorEvidencePersisted === 1 : null;
+  return riskNoticeFires(evidence, ourP50DelaySec, cfg, persisted);
 }
 
 // MARK: - recovery probability (§17/§62)

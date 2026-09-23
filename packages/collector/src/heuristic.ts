@@ -170,7 +170,12 @@ export function predictHeuristic(db: Db, run: RunRecord, state: FusedState, even
   const p90 = Math.round(p50 + 1.2 * spreadTotal * 1000);
 
   const confBase = state.confidence === 'HIGH' ? 0.75 : state.confidence === 'MEDIUM' ? 0.55 : 0.35;
-  const confidence = Math.round((confBase * (0.6 + 0.4 * Math.min(1, coverage)) + (opEta == null ? -0.1 : 0)) * 100) / 100;
+  // §77 coupling: when the trust resolver reports MIA and ViaggiaTreno
+  // disagreeing by >300s on the current delay, the fused input itself is
+  // suspect — shave confidence before the clamp below
+  const delayDisagreementSec = state.provenance?.delay?.disagreementSeconds ?? null;
+  const trustDisagreementPenalty = delayDisagreementSec != null && delayDisagreementSec > 300 ? 0.1 : 0;
+  const confidence = Math.round((confBase * (0.6 + 0.4 * Math.min(1, coverage)) + (opEta == null ? -0.1 : 0) - trustDisagreementPenalty) * 100) / 100;
 
   return {
     p10, p50, p90,

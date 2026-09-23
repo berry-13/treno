@@ -9,7 +9,8 @@ import { getRow, getRows, runStmt, type Db } from '#core/db.ts';
 import { log } from '#core/log.ts';
 import { romeWallToEpoch, secondsToHms } from '#core/time.ts';
 import { ensureRun, mapSourceKey, resolveRun, type RunRecord } from '#storage/runs.ts';
-import { fillPredictionOutcomes, insertObservation, insertServiceAlert, recordPrediction, saveState, upsertStopEvent } from '#storage/observations.ts';
+import { fillPredictionOutcomes, insertObservation, insertServiceAlert, providerHealth, recordPrediction, saveState, upsertStopEvent } from '#storage/observations.ts';
+import { healthSnapshot, resolveTrust, type FusedProvenancePick } from './trust.ts';
 import { deriveSegmentObservations } from '#storage/segments.ts';
 import { notifyWatchers } from './notifications.ts';
 import { recordSourceConflict } from './conflicts-backfill.ts';
@@ -199,6 +200,13 @@ export interface FusedState {
   latestSource: string | null;
   sources: Record<string, { observedAt: number | null; fetchedAt: number | null; delaySec: number | null; ageSec: number | null; status: string | null }>;
   sourceDelaySpreadSec: number | null;
+  /** §77 contextual-trust provenance: which source supplied delay/position,
+   *  at what trust level and age, plus the quantified cross-source
+   *  disagreement on delay (null when only one source reported). */
+  provenance?: {
+    delay: (FusedProvenancePick & { disagreementSeconds: number | null }) | null;
+    position: FusedProvenancePick | null;
+  };
   previousStop: { stopId: string; name: string | null; actualArrEpoch: number | null } | null;
   nextStop: { stopId: string; name: string | null; schedArrEpoch: number | null; opPredArrEpoch: number | null } | null;
   destinationOperatorEta: number | null;
@@ -276,6 +284,43 @@ export function fuseRunState(db: Db, run: RunRecord): FusedState {
   }
   const spread = delays.length >= 2 ? Math.max(...delays) - Math.min(...delays) : null;
 
+  // §77 contextual source trust: route the current-delay and position picks
+  // through the declarative trust table. Identical outcome to the legacy
+  // freshest-wins pick in the healthy, agreeing case (60s agreement window);
+  // the value here is quantified disagreement (§78) and graceful degradation
+  // when a provider's health state is DEGRADED/PAUSED.
+  const health = healthSnapshot(providerHealth(db).map((r) => ({ source: r.source, state: r.state })));
+  const delayCandidates = [...latestPerSource.values()]
+    .filter((o) => o.delay_seconds != null)
+    .map((o) => ({ source: o.source, value: o.delay_seconds as number, observedAt: o.observed_at ?? o.ts }));
+  const posCandidates = [...latestPerSource.values()]
+    .map((o) => ({ source: o.source, value: { id: o.location_id, name: o.location_name, kind: o.location_kind }, observedAt: o.observed_at ?? o.ts }));
+  const delayPick = resolveTrust('current_delay', delayCandidates, health, { agreementSec: 60 });
+  const posPick = resolveTrust('position', posCandidates, health);
+  const pickAgeSec = (observedAt: number | null): number | null =>
+    observedAt != null ? Math.round((now - observedAt) / 1000) : null;
+  const provenance: FusedState['provenance'] = {
+    delay: delayPick.chosen
+      ? {
+          source: delayPick.chosen.source,
+          trust: delayPick.chosen.trust,
+          observedAt: delayPick.chosen.observedAt,
+          ageSec: pickAgeSec(delayPick.chosen.observedAt),
+          disagreementSeconds: delayPick.disagreementSeconds,
+          reason: delayPick.reason,
+        }
+      : null,
+    position: posPick.chosen
+      ? {
+          source: posPick.chosen.source,
+          trust: posPick.chosen.trust,
+          observedAt: posPick.chosen.observedAt,
+          ageSec: pickAgeSec(posPick.chosen.observedAt),
+          reason: posPick.reason,
+        }
+      : null,
+  };
+
   const passed = events.filter((e) => e.actual_arr_epoch != null || e.actual_dep_epoch != null);  const previousStopRow = passed.length > 0 ? passed[passed.length - 1]! : null;
   const upcoming = events.filter((e) => e.actual_arr_epoch == null && e.cancelled !== 1 && (e.sched_arr_epoch == null || e.sched_arr_epoch >= (previousStopRow?.actual_arr_epoch ?? 0)));
   const nextStopRow = upcoming[0] ?? null;
@@ -318,12 +363,13 @@ export function fuseRunState(db: Db, run: RunRecord): FusedState {
     schedDepEpoch: run.sched_dep_epoch,
     schedArrEpoch,
     status,
-    operatorDelaySec: freshest?.delay_seconds ?? null,
-    latestLocation: freshest ? { id: freshest.location_id, name: freshest.location_name, kind: freshest.location_kind } : null,
-    latestObservedAt: freshest?.observed_at ?? (freshest ? freshest.ts : null),
-    latestSource: freshest?.source ?? null,
+    operatorDelaySec: delayPick.chosen?.value ?? null,
+    latestLocation: posPick.chosen ? posPick.chosen.value : null,
+    latestObservedAt: posPick.chosen?.observedAt ?? null,
+    latestSource: posPick.chosen?.source ?? null,
     sources,
     sourceDelaySpreadSec: spread,
+    provenance,
     previousStop: previousStopRow ? { stopId: previousStopRow.stop_id, name: stopName(db, previousStopRow.stop_id), actualArrEpoch: previousStopRow.actual_arr_epoch } : null,
     nextStop: nextStopRow ? { stopId: nextStopRow.stop_id, name: stopName(db, nextStopRow.stop_id), schedArrEpoch: nextStopRow.sched_arr_epoch, opPredArrEpoch: nextStopRow.op_pred_arr_epoch } : null,
     destinationOperatorEta: destOpEta,

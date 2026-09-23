@@ -26,10 +26,12 @@ import { decodeWaitMessage } from '#providers/atm.ts';
 import { providerHealth } from '#storage/observations.ts';
 import { listRailLocations } from '#storage/railLocations.ts';
 import { segmentStatsTable, corridorDelta, segmentId as segId } from '#storage/segments.ts';
-import { connectionOptions } from '#collector/heuristic.ts';
+import { connectionOptions, recoveryForecast } from '#collector/heuristic.ts';
 import { predictPlatforms } from '#collector/train-platforms.ts';
 import { secondsIntoServiceDay, bareTrainNumber } from '#collector/discover.ts';
 import { romeYmd, romeWallToEpoch, ymdPlusDays } from '#core/time.ts';
+import { getCachedRailGraph, canonicalLocationKey } from '#core/railgraph-build.ts';
+import { inferLocation } from '#core/railgraph.ts';
 import { journeysFor } from './journeys.ts';
 
 interface StateRow { run_id: number; state_json: string; updated_at: number }
@@ -212,7 +214,101 @@ export function buildApp(db: Db) {
         }
       }
     }
-    return c.json({ ...base, stops, recentObservations: observations, latestPrediction: latestPrediction ?? null, connections, crowding: crowding ?? null, riskNotice });
+    // §17/§62 recovery probability at the destination: P(delay shrinks by
+    // ≥2 min) from our arrival quantiles. recoveryForecast itself suppresses
+    // the number when there is nothing to recover (delay ≤ 0) or the spread
+    // is too thin for an honest percentage (§16) — the field is then omitted
+    // entirely so clients render nothing instead of a fake 0%/100%.
+    const stRec = base.state as {
+      operatorDelaySec?: number | null; schedArrEpoch?: number | null; status?: string;
+      ourEstimate?: { p10: number; p50: number; p90: number } | null;
+    } | null;
+    const recovery = stRec?.ourEstimate && stRec.operatorDelaySec != null && stRec.schedArrEpoch != null
+      && stRec.status !== 'arrived' && stRec.status !== 'cancelled'
+      ? recoveryForecast(stRec.operatorDelaySec, stRec.schedArrEpoch, stRec.ourEstimate.p10, stRec.ourEstimate.p50, stRec.ourEstimate.p90)
+      : null;
+    // §83 map matching: probabilistic location inference from the run's most
+    // recent located observation against the cached railway graph. Blind top-k
+    // on purpose: masking the back-edge measured WORSE offline (the operator
+    // feed itself flaps A→B→A, so "where we came from" is often genuinely the
+    // next reported point). Unknown location → explicit nulls, never a guess.
+    let locationInference: unknown = null;
+    try {
+      const bundle = getCachedRailGraph(db); // built once per process
+      let lastKey: string | null = null;
+      for (const o of observations as Array<{ location_id: string | null; location_name: string | null }>) {
+        const k = canonicalLocationKey(bundle.keyspace, o.location_id, o.location_name);
+        if (k != null) { lastKey = k; break; }
+      }
+      if (lastKey != null) {
+        const g = bundle.graph;
+        const nameOf = (k: string) => g.nodes.get(k)?.name ?? null;
+        const kindOf = (k: string) => g.nodes.get(k)?.kind ?? null;
+        const inf = inferLocation(g, lastKey, { topK: 3 });
+        locationInference = {
+          lastConfirmed: inf.lastConfirmed,
+          lastConfirmedName: nameOf(inf.lastConfirmed),
+          lastConfirmedKind: kindOf(inf.lastConfirmed),
+          plausibleNext: inf.plausibleNext?.map((p) => ({ key: p.key, name: nameOf(p.key), kind: kindOf(p.key), p: Math.round(p.p * 1000) / 1000 })) ?? null,
+          likelySegment: inf.likelySegment != null
+            ? { from: inf.likelySegment.from, to: inf.likelySegment.to, fromName: nameOf(inf.likelySegment.from), toName: nameOf(inf.likelySegment.to), p: Math.round(inf.likelySegment.p * 1000) / 1000 }
+            : null,
+        };
+      }
+    } catch { /* graph unavailable (e.g. no schedule yet) — leave null */ }
+    // §48 honest train position for the UI: with no GPS there is no exact dot
+    // to draw. likelyArea carries the segment the train is plausibly on —
+    // anchored at the last detected station when the operator named one, else
+    // at the last served stop, ending at the next scheduled stop — plus the
+    // GTFS stop coordinates an uncertainty map needs. Reporting points
+    // (GOAL §82) have no coordinates, so they only name the detection while
+    // the area anchors on the enclosing scheduled stops. Omitted whenever the
+    // run is not between points or no anchor resolves: absence beats a fake
+    // position.
+    const stPos = base.state as {
+      status?: string;
+      latestObservedAt?: number | null;
+      latestLocation?: { id: string | null; name: string | null; kind: string | null } | null;
+    } | null;
+    const detectedAt = stPos?.latestObservedAt ?? null;
+    let likelyArea: {
+      fromStopId: string | null; fromName: string | null; fromLat: number | null; fromLon: number | null;
+      toStopId: string | null; toName: string | null; toLat: number | null; toLon: number | null;
+      detectedName: string | null; detectedAt: number | null; ageSec: number | null;
+    } | null = null;
+    if (stPos?.status === 'running' && detectedAt != null) {
+      const stopCoords = (sid: string | null | undefined) => sid == null ? null : getRow<{ stop_id: string; stop_name: string | null; stop_lat: number | null; stop_lon: number | null }>(db, 'SELECT stop_id, stop_name, stop_lat, stop_lon FROM gtfs_stops WHERE stop_id=?', [sid]);
+      const upcomingIdx = stops.findIndex((s) => s.actual_arr_epoch == null && s.actual_dep_epoch == null && s.cancelled !== 1);
+      const toStop = upcomingIdx >= 0 ? stops[upcomingIdx]! : null;
+      if (toStop) {
+        const detected = stPos.latestLocation;
+        let fromCoords = detected?.kind === 'station' && detected.id != null && detected.id !== toStop.stop_id
+          ? stopCoords(detected.id)
+          : null;
+        if (!fromCoords && upcomingIdx > 0) fromCoords = stopCoords(stops[upcomingIdx - 1]!.stop_id);
+        if (fromCoords && fromCoords.stop_id !== toStop.stop_id) {
+          const toCoords = stopCoords(toStop.stop_id);
+          likelyArea = {
+            fromStopId: fromCoords.stop_id,
+            fromName: fromCoords.stop_name ?? detected?.name ?? null,
+            fromLat: fromCoords.stop_lat,
+            fromLon: fromCoords.stop_lon,
+            toStopId: toStop.stop_id,
+            toName: toStop.stop_name ?? toCoords?.stop_name ?? null,
+            toLat: toCoords?.stop_lat ?? null,
+            toLon: toCoords?.stop_lon ?? null,
+            detectedName: detected?.name ?? null,
+            detectedAt,
+            ageSec: Math.max(0, Math.round((Date.now() - detectedAt) / 1000)),
+          };
+        }
+      }
+    }
+    return c.json({
+      ...base, stops, recentObservations: observations, latestPrediction: latestPrediction ?? null,
+      connections, crowding: crowding ?? null, riskNotice, locationInference, likelyArea,
+      ...(recovery != null ? { recovery: { probRecover2m: recovery.probRecover, expectedDelaySec: recovery.expectedDelaySec, basedOnQuantiles: true } } : {}),
+    });
   });
 
   // §84 reliability: 30-day actual behaviour. Percentages are suppressed

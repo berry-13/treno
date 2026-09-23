@@ -40,6 +40,11 @@ Home focuses on your next saved journey and stations you have saved or used. Sta
 search, a map, departures, delays, and labeled platforms. Journey and train
 pages show departure/arrival times and a stop timeline; the scheduled,
 operator, and Treno estimates are available under **About these times**.
+Running trains also get a **likely area** card (GOAL §48): without GPS there
+is no exact dot, so the train page names the stretch the train is plausibly
+on — two stops joined by a dashed line on a small map, plus the last
+confirmed sighting and its age. The card hides entirely when the position is
+stale or unknown.
 Settings is accessed from the gear button on Home; local server setup is
 under **Data connection**. Saved routes and favorites stay on the device.
 
@@ -117,6 +122,27 @@ Monorepo layout (npm workspaces, TypeScript ESM, no build step — run with tsx)
   departures at the destination with P(success) from our arrival distribution
   + per-station transfer buffer, using live delay of the connecting service
   when tracked. Shown in the iOS app as "connections at destination".
+- **Recovery prediction (§17/§62)** — `recoveryForecast()` in
+  `packages/collector/src/heuristic.ts`: given the current delay D and our
+  p10/p50/p90 arrival quantiles, P(final delay ≤ D − 120s) via a
+  piecewise-linear quantile CDF (documented assumption; monotone by
+  construction). `GET /api/trains/:id` attaches it additively as
+  `recovery: {probRecover2m, expectedDelaySec, basedOnQuantiles}` — omitted
+  when D ≤ 0 (nothing to recover) or when p90−p10 > 1800s (§16: no fake
+  percentages on thin spreads). The iOS train page shows one inline chip
+  ("72% recovers ≥2m") in the status area, hidden when suppressed.
+- **Smart alternatives / journey ranking (§19/§62)** —
+  `GET /api/journeys` options are now ranked by expected REAL arrival, not
+  schedule: each option gets `expectedArrivalEpoch` (strongest signal first:
+  actual arrival → operator stop prediction → our p50 delay carried onto the
+  leg → observed departure delay → scheduled fallback, `expectedArrivalLive`
+  says which), a `riskPenaltySec` (§19 utility = expected arrival + risk; the
+  p90 tail of our own distribution is the single-leg analogue of a shaky
+  connection — the same spread the §18 connection model consumes), and the
+  best still-catchable option is flagged `recommended: true`. Existing fields
+  are unchanged (additive). The iOS trip search marks the recommended option
+  and prints expected arrival times where they move the scheduled one by
+  more than a minute; saved-trip cards do the same.
 - **Benchmark (§34)** — `npm run bench [-- --days=30]`: scores every recorded
   prediction at T-1…T-30+ horizons: schedule vs operator vs each of our models
   (MAE/medAE/RMSE/P90/P95/bias + interval coverage), writes
@@ -169,6 +195,7 @@ Normalized tables worth knowing:
 GET /api/health                     providers + table counts + change rates
 GET /api/trains?q=&limit=           runs with fused state (incl. ourEstimate)
 GET /api/trains/:id                 run + stops + observations + latestPrediction + connections
+                                    + locationInference (§83 rail-graph map matching)
 GET /api/stops/search?q=
 GET /api/stops/:id/departures       today's board ±window with live state
 GET /api/segments                   segment statistics (top by sample count)
@@ -203,6 +230,65 @@ from `gtfs_stops` (which remains the canonical home of passenger stations):
 - Ops can inspect via `GET /api/rail-locations?type=&limit=` (heaviest
   evidence first), which is also the stable read path for §83 map matching.
 
+## Rail graph location inference (§83)
+
+Reporting-point observations (above) say where a train *was* — §83 turns them
+into where it *is going*: last confirmed point, next plausible points, and the
+segment most likely occupied right now.
+
+**Graph** (`packages/core/src/railgraph-build.ts`, read-only scans, built once
+per API process and cached; rebuilt lazily only while empty):
+
+- Node keys: GTFS stop ids; observation `location_id`s that are GTFS stops
+  (MIA uses the same id space); ids bridged by uppercase name when RFI and
+  Trenord disagree (Brescia `S01717` vs `S09999`); and for non-passenger
+  reporting points the raw id or `n:` + slug(UPPERCASE name) — `Bivio Casirate`
+  and `BIVIO CASIRATE` collapse to the same node.
+- Edges (directed, with traversal counts → per-node normalized priors):
+  consecutive stop pairs per trip in `gtfs_stop_times`, plus consecutive
+  distinct locations per **(run, source)** in `train_observations` — the only
+  way reporting points enter the graph. Sequencing is per source: sources
+  disagree about a train's position at the same instant (MIA often lags at the
+  origin), so interleaving by timestamp would fabricate transitions.
+
+**Inference** (`packages/core/src/railgraph.ts`, pure, no DB): `inferLocation`
+returns `{lastConfirmed, plausibleNext (top-3, renormalized), likelySegment
+{from, to, p}}`. An unknown point degrades to explicit nulls — never a guess
+(§16). A sink (terminal station) returns an empty `plausibleNext`. Serving:
+`GET /api/trains/:id` gains `locationInference` computed from the run's latest
+located observation.
+
+**Offline evaluation** (tmp/railgraph-eval.ts, not committed; numbers from
+2026-09-16 data): for every confirmed non-schedule point in per-source
+observation histories, predict top-3 plausible next and check the next
+distinct observed location. Two regimes:
+
+| regime | n | top-1 | top-3 |
+|---|---|---|---|
+| full history (production steady state) | 12,104 | 26.1% | 52.6% |
+| time-split (edges from first 80%, tested on last 20%) | 1,920 | 19.3% | 35.4% |
+
+Per-source (split): MIA 27.2%/43.3%, viaggiatreno 13.7%/29.9% — MIA's
+next-stop progressions are cleaner, viaggiatreno's raw positions flap
+(A→B→A). Notably, reporting points are far *more* predictive than stations
+(station-confirmed instances: 9.6% top-1): a station fans out to many route
+successors, a mid-line point has few.
+
+Honest limitations:
+
+- **Direction is real but unmasked on purpose.** Masking the back-edge
+  ("where we came from") measured *worse* (top-3 41.9% vs 52.6%): ~17% of
+  misses have the actual next equal to the previous point — the feed itself
+  flaps between adjacent points, so the back-edge is often genuinely the next
+  report. Without route/direction context the top-3 must span both
+  directions; e.g. the border point `Conf. IT/CH MO1` splits Varese 40% /
+  Como S.Giovanni 40%.
+- **Sparsity bounds top-1.** Many reporting points have 2–5 observed
+  transitions total, so priors are coarse (50/25/25-style).
+- The likely-segment confidence is the raw share of outgoing traversals
+  (not renormalized), so a 40% "likely segment" is an honest statement that
+  60% of the time the train is elsewhere.
+
 ## Source etiquette (§57)
 
 Undocumented public endpoints are treated carefully: descriptive User-Agent,
@@ -211,6 +297,46 @@ trains), per-source request spacing + max concurrency 2, retries with backoff
 on transient failures only, 4xx treated as entity-level misses (except
 403/429 which pause the source), every raw payload retained so history can be
 reprocessed without re-fetching (§79).
+
+## Source trust model (§77)
+
+Source reliability is contextual, per field class — never one fixed global
+ranking. `packages/collector/src/trust.ts` holds the declarative table
+(`FIELD_TRUST`); `resolveTrust(fieldClass, candidates, healthSnapshot)` picks
+a winner, quantifies cross-source disagreement (`disagreementSeconds`), and
+returns a human-readable reason. The pipeline routes its current-delay and
+position picks through it and attaches a `provenance` object to the fused
+state (source, trust, age, disagreement, reason per field).
+
+| field class | mia | viaggiatreno | gtfsrt | ours |
+|---|---|---|---|---|
+| actual passed-stop timestamp | HIGH | HIGH | – | – |
+| current delay | MEDIUM | HIGH | – | – |
+| future ETA | MEDIUM | – | HIGH | model confidence |
+| position | freshest infrastructure observation wins | | | |
+
+Resolution rules (in order):
+
+1. **Trust ladder**: highest trust wins (`HIGH > MEDIUM > LOW`, unknown
+   sources rank LOW); within equal trust the fresher observation wins;
+   `ours` ranks by model confidence (>=0.75 HIGH, >=0.5 MEDIUM, else LOW).
+2. **Position rule**: `FRESHEST_INFRASTRUCTURE_WINS` — the freshest
+   observation among infrastructure sources (mia/viaggiatreno/gtfsrt);
+   trust only breaks exact-timestamp ties.
+3. **Agreement window** (60s in the pipeline): when the trust winner and a
+   fresher candidate from another source agree within the window, freshness
+   decides — sources that concur carry no conflict, so the common-case pick
+   is identical to the legacy freshest-wins logic and the trust ladder takes
+   over only on real disagreement (§78).
+4. **Health degradation**: a source whose `provider_health` state is
+   `DEGRADED` is demoted one trust level, `PAUSED` two levels (floored at
+   LOW) before ranking — passed in as a snapshot (the resolver itself is
+   pure: no DB access). A paused ViaggiaTreno therefore lets a healthy MIA
+   supply the delay, and vice versa.
+
+Confidence coupling (§46/§77): when the resolver reports MIA vs ViaggiaTreno
+delay disagreement >300s, the heuristic prediction shaves 0.1 off confidence
+(before clamping) — the fused input itself is suspect.
 
 ## Current status / what's next (GOAL.md build order)
 
@@ -292,6 +418,38 @@ Polling that internal API at collector scale would violate their terms. If
 they ever publish a documented live API, the provider pattern to follow is
 `packages/providers/vt.ts` (envelope + parse → `ingestSnapshot`).
 
+## Source conflicts (2026-09-23)
+
+When MIA says +4 and ViaggiaTreno says +7, neither value is overwritten —
+per-source observation rows keep both (that was already true), and since
+2026-09-23 the disagreement itself is materialized as its own signal
+(GOAL §78): the intuition is that *sources disagreeing predicts instability*.
+
+- **Table** `source_conflicts` (SQLite schema + ClickHouse mirror DDL): one
+  row per detected disagreement — `run_id`, `ts` (the newer observation's
+  time), `field` (`delay_seconds` today; more fields can be added without a
+  migration), `value_a/value_b` with canonical alphabetical `source_a/source_b`
+  ordering (`mia` < `viaggiatreno`), `spread_seconds = |Δdelay|`.
+- **Rule** (`packages/collector/src/conflicts-backfill.ts`, one definition for
+  live + backfill): two per-source delay observations for the same run within
+  a **90s window** whose |Δdelay| is **> 120s** write a conflict row, deduped
+  to at most one row per run+field in any **5-minute** stretch. The live hook
+  runs in `pipeline.ts` `ingestSnapshot` right after the observation insert.
+- **Backfill** — replay the identical rule over stored history (idempotent;
+  existing rows, live or from a previous run, seed the dedup):
+  ```
+  npm run conflicts:backfill        # local
+  docker compose run --rm collector npx tsx packages/collector/src/conflicts-backfill.ts   # server
+  ```
+- **Feature** `delay_source_spread` (FeatureInput `delaySourceSpreadSec`):
+  the latest conflict spread at or before the prediction instant, `0` when the
+  sources agree — point-in-time safe (`ts <=` prediction time, the same
+  discipline as the other context features). New predictions record it into
+  `features_json`; historical prediction rows get it recomputed the same way
+  at train time (`train.ts` `extract()`), so the nightly retrain sees it
+  across the whole window without a re-ingest. Append-only like every feature:
+  the serving model ignores it until a retrain picks it up.
+
 ## Event calendar — strikes, stadium fixtures, holidays (2026-09-18)
 
 Exogenous event features for the model (GOAL §51 context + propagation
@@ -354,4 +512,46 @@ docker compose up -d --build        # collector + api :8787 + trainer + clickhou
 Additional env for the mirror:
 ```
 TRENO_CLICKHOUSE_URL   unset = SQLite-only (local dev default)
+```
+
+## Training data export (GOAL §71)
+
+Export point-in-time training sets as Parquet — one row per scored prediction
+(`predictions ⋈ prediction_outcomes ⋈ train_runs`), `features_json` unpacked
+into 21 typed `f_*` columns, plus run/stop context (`service_date`,
+`train_number`, `operator`, `line`, `run_id`, `prediction_id`, `stop_id`,
+`model_version`, `generated_at`, `horizon_sec`, `horizon_bucket`, all ETA
+epochs/errors) — 41 columns total:
+
+```
+npm run export:parquet                     # full export of the local SQLite DB
+npm run export:parquet -- --limit 1000     # smoke sample
+npm run export:parquet -- --date 2026-09-13 --by-line
+```
+
+Layout: `data/exports/parquet/service_date=YYYY-MM-DD/part-NNNN.parquet`
+(Hive-style, `line=…` sublevel with `--by-line`; `data/exports/` is
+gitignored). Files roll at 100k rows (`--rows-per-file`).
+
+Two sources, in preference order:
+
+- `TRENO_CLICKHOUSE_URL` set (default `auto`): streams
+  `SELECT … FORMAT Parquet` per partition through `@clickhouse/client` —
+  ClickHouse itself writes the Parquet. On the server:
+  `docker compose exec collector sh -c 'TRENO_CLICKHOUSE_URL=http://clickhouse:8123 npm run export:parquet'`
+  (then `docker compose cp` the `data/exports/` directory out of the volume).
+- Local fallback (offline, zero new deps): a minimal pure-TS Parquet writer
+  (`packages/storage/src/export-parquet.ts`) — PLAIN encoding, gzip via
+  fflate, one row group per file, data page v1, all columns OPTIONAL; no
+  dictionary/statistics/nested types (limits documented in the file header).
+  Every file is round-trip verified after writing: the exporter re-parses the
+  footer, re-decodes every page of every column and compares all cells
+  against what was written; it prints per-file rows/size and `round-trip OK`.
+
+Analyze with DuckDB/Polars:
+
+```
+duckdb -c "SELECT horizon_bucket, count(*), avg(abs(our_error_sec)) AS mae
+           FROM read_parquet('data/exports/parquet/**/*.parquet', hive_partitioning=true)
+           GROUP BY 1 ORDER BY 1"
 ```

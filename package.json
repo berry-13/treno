@@ -30,6 +30,7 @@
     "train:sweep": "tsx packages/collector/src/train-sweep.ts",
     "atm:latent-study": "tsx packages/collector/src/atm-latent-study.ts",
     "conflicts:backfill": "tsx packages/collector/src/conflicts-backfill.ts",
+    "quality:backfill": "tsx packages/collector/src/quality-backfill.ts",
     "retain": "tsx packages/storage/src/retention.ts",
     "ch:backfill": "tsx packages/storage/src/backfill-ch.ts",
     "typecheck": "tsc -p tsconfig.json"

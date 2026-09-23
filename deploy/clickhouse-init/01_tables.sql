@@ -112,6 +112,12 @@ CREATE TABLE IF NOT EXISTS source_snapshots (
 ALTER TABLE train_observations ADD COLUMN IF NOT EXISTS crowding_pct Nullable(Int32);
 ALTER TABLE train_observations ADD COLUMN IF NOT EXISTS crowding_label Nullable(String);
 
+-- data quality flags (GOAL.md §45), added 2026-09-23 — stop-event-level flags
+-- (IMPOSSIBLE_RUNTIME over consecutive actual times); train_observations
+-- already carries quality_flags in its CREATE above. SQLite is the operational
+-- truth; the backfill recomputes flags there.
+ALTER TABLE train_stop_events ADD COLUMN IF NOT EXISTS quality_flags Nullable(String);
+
 -- source conflicts (GOAL.md §78), added 2026-09-23 — materialized MIA vs
 -- ViaggiaTreno disagreement per run/field (delay_source_spread feature);
 -- SQLite source_conflicts is the operational truth, this the analytical mirror

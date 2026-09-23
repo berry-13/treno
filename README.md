@@ -148,8 +148,11 @@ Monorepo layout (npm workspaces, TypeScript ESM, no build step — run with tsx)
   (MAE/medAE/RMSE/P90/P95/bias + interval coverage), writes
   `data/reports/benchmark-YYYY-MM-DD.md`. Verdict line refuses to claim
   accuracy until a model beats the operator on ≥30 outcomes.
-- **Quality engine (§45)** — DELAY_JUMP flags on observations;
-  SOURCE_CONFLICT/STALE_SOURCE in fused state quality.
+- **Quality engine (§45)** — every observation is validated at ingest
+  (OUT_OF_ORDER / STALE_SOURCE / DELAY_JUMP) and the full rule set
+  (SOURCE_CONFLICT, BACKWARDS_TELEPORT, IMPOSSIBLE_RUNTIME, UNKNOWN_RUN,
+  UNMAPPED_STOP) is recomputable over history; see
+  [Data quality engine (§45)](#data-quality-engine-45) below.
 - **Alerts (§50)** — provider alerts deduped into `service_alerts`;
   `GET /api/alerts`.
 - **Retention (§43)** — `npm run retain [-- --raw-days=45 --obs-days=365]`.
@@ -452,6 +455,62 @@ per-source observation rows keep both (that was already true), and since
   at train time (`train.ts` `extract()`), so the nightly retrain sees it
   across the whole window without a re-ingest. Append-only like every feature:
   the serving model ignores it until a retrain picks it up.
+
+## Data quality engine (§45)
+
+Every observation is validated; anomalies are **flagged, never silently
+discarded** (`packages/storage/src/quality.ts`). Flags accumulate as a JSON
+string array in `quality_flags` on `train_observations` and
+`train_stop_events` — the same format the insert path has always written, e.g.
+`["OUT_OF_ORDER","BACKWARDS_TELEPORT"]`. Rows are never dropped or rewritten;
+the flag is the annotation.
+
+| flag | meaning | where |
+|---|---|---|
+| `OUT_OF_ORDER` | `observed_at` goes backwards vs the previous observation of the same source (≥1 s regression) | both |
+| `STALE_SOURCE` | upstream `observed_at` lags the fetch `ts` by >10 min | both |
+| `SOURCE_CONFLICT` | MIA vs ViaggiaTreno delay differ by >300 s within a 90 s fetch window (flag lands on the later row) | backfill |
+| `DELAY_JUMP` | same-source delay changes by more than ±60 min between consecutive observations | both |
+| `BACKWARDS_TELEPORT` | location regresses to an earlier stop of the run's `gtfs_stop_times` sequence (locations that are not trip stops are skipped) | backfill |
+| `IMPOSSIBLE_RUNTIME` | consecutive stop actuals imply >300 km/h (needs `gtfs_stops` coords; rows lacking them are skipped; non-positive Δt over a real distance flags too) | backfill (stop events) |
+| `UNKNOWN_RUN` | run has no GTFS trip mapping (`gtfs_trip_id IS NULL`) — schedule-relative checks are impossible for these rows | backfill |
+| `UNMAPPED_STOP` | observation `location_id` not present in `gtfs_stops` | backfill |
+
+- **Ingest hook** — `pipeline.ts` runs the cheap per-row rules
+  (`OUT_OF_ORDER`, `STALE_SOURCE`, `DELAY_JUMP`) against the previous
+  same-source observation and stores the flags at insert time
+  (`ingestRowFlags`).
+- **Backfill** — the whole-run rules (SOURCE_CONFLICT, BACKWARDS_TELEPORT,
+  IMPOSSIBLE_RUNTIME, UNKNOWN_RUN, UNMAPPED_STOP) plus the same cheap rules
+  are recomputed over stored history by a single deterministic pass that
+  overwrites `quality_flags` in place (idempotent — a second pass updates
+  zero rows, which `--verify` asserts):
+  ```
+  npm run quality:backfill          # local; writes data/reports/quality-backfill.md
+  npm run quality:backfill -- --verify
+  docker compose run --rm collector npm run quality:backfill    # server
+  ```
+- **Design** — rule predicates are pure functions of row values
+  (`outOfOrder`, `staleSource`, `delayJump`, `flagRunObservations`,
+  `flagStopEventRuntimes`) so they are unit-testable without a DB; the apply
+  step (`recomputeRunQuality` / `recomputeAllQuality`) loads each run's rows
+  in observation order and stamps the result.
+- **vs §78 source conflicts** — complementary layers: §78 materializes every
+  >120 s MIA↔VT disagreement into `source_conflicts` (feature-shaped, 5-min
+  dedup); the §45 `SOURCE_CONFLICT` flag marks the observation rows
+  themselves at the >300 s severity the GOAL list implies.
+- **ClickHouse** — `quality_flags` exists on both mirrored tables
+  (`deploy/clickhouse-init/01_tables.sql`); new rows carry their insert-time
+  flags from the collector deploy onward, while backfilled historical flags
+  live in SQLite (the CH observation table is an append-only MergeTree —
+  re-mirroring would duplicate rows).
+
+Local backfill over the full history (2026-09-23, 228,912 observations /
+82,408 stop events): 114,319 flagged observations (49.9%) — UNKNOWN_RUN 53,113
+· OUT_OF_ORDER 43,423 · BACKWARDS_TELEPORT 27,531 · UNMAPPED_STOP 11,906 ·
+STALE_SOURCE 7,442 · SOURCE_CONFLICT 5,321 · DELAY_JUMP 24 — plus 212
+IMPOSSIBLE_RUNTIME stop events. Verified idempotent (second pass: 0 updates).
+
 
 ## Source conflicts (2026-09-23)
 

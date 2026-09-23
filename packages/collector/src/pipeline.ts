@@ -10,6 +10,7 @@ import { log } from '#core/log.ts';
 import { romeWallToEpoch, secondsToHms } from '#core/time.ts';
 import { ensureRun, mapSourceKey, resolveRun, type RunRecord } from '#storage/runs.ts';
 import { fillPredictionOutcomes, insertObservation, insertServiceAlert, providerHealth, recordPrediction, saveState, upsertStopEvent } from '#storage/observations.ts';
+import { ingestRowFlags } from '#storage/quality.ts';
 import { healthSnapshot, resolveTrust, type FusedProvenancePick } from './trust.ts';
 import { deriveSegmentObservations } from '#storage/segments.ts';
 import { notifyWatchers } from './notifications.ts';
@@ -58,17 +59,17 @@ export function ingestSnapshot(db: Db, s: ProviderTrainSnapshot, meta: IngestMet
 
   // observation row only when the relevant fields changed (GOAL.md §44)
   if (meta.snapshot.changed) {
-    // §45 quality flags: detect anomalous delay jumps vs the previous
-    // observation from the same source
-    const flags: string[] = [];
-    const prev = getRow<{ delay_seconds: number | null }>(
-      db,
-      'SELECT delay_seconds FROM train_observations WHERE run_id=? AND source=? ORDER BY ts DESC LIMIT 1',
-      [runId, s.source],
-    );
-    if (prev?.delay_seconds != null && s.delaySeconds != null && Math.abs(s.delaySeconds - prev.delay_seconds) > 1200) {
-      flags.push('DELAY_JUMP');
-    }
+    // §45 quality flags: cheap per-row rules (OUT_OF_ORDER, STALE_SOURCE,
+    // DELAY_JUMP) vs the previous same-source observation; the whole-run
+    // rules (SOURCE_CONFLICT, BACKWARDS_TELEPORT, ...) are recomputed by
+    // `npm run quality:backfill`
+    const flags = ingestRowFlags(db, {
+      runId,
+      ts: meta.fetchedAt,
+      source: s.source,
+      observedAt: s.observedAt,
+      delaySeconds: s.delaySeconds,
+    });
     insertObservation(db, {
       runId,
       ts: meta.fetchedAt,

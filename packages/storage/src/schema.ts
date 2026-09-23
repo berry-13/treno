@@ -48,6 +48,8 @@ export function ensureNormalizedTables(db: Db): void {
   // migrations for databases created before these columns existed
   try { db.exec('ALTER TABLE predictions ADD COLUMN features_json TEXT'); } catch { /* column exists */ }
   try { db.exec('ALTER TABLE train_observations ADD COLUMN quality_flags TEXT'); } catch { /* column exists */ }
+  // §45: stop-event-level flags (IMPOSSIBLE_RUNTIME over consecutive actuals)
+  try { db.exec('ALTER TABLE train_stop_events ADD COLUMN quality_flags TEXT'); } catch { /* column exists */ }
   // crowding (GOAL.md §53): train-level in MIA, evolves over the run — the
   // observation time series preserves that evolution
   try { db.exec('ALTER TABLE train_observations ADD COLUMN crowding_pct INTEGER'); } catch { /* column exists */ }

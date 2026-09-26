@@ -14,6 +14,7 @@ import { MIA_PARSER_VERSION, MIA_SOURCE } from '#providers/mia.ts';
 import { VT_PARSER_VERSION, VT_SOURCE } from '#providers/vt.ts';
 import { ATM_SOURCE, atmConfiguredStops, decodeWaitMessage, fetchAtmStop, fetchMetroStatus } from '#providers/atm.ts';
 import { ensureAtmSchedule } from '#gtfs/atm.ts';
+import { gateQueueDepth } from '#providers/http.ts';
 import { putSnapshot } from '#storage/rawStore.ts';
 import { insertServiceAlert, updateProviderHealth } from '#storage/observations.ts';
 import { refreshSegmentStats, logSegmentSummary } from '#storage/segments.ts';
@@ -73,6 +74,8 @@ function markSourcePause(db: Db, source: string, untilMs: number): void {
 
 export class Collector {
   private tracked = new Map<string, TrackedRun>(); // key: serviceDate|trainNumber
+  private miaPending = new Set<TrackedRun>(); // runs with a MIA poll queued or in flight
+  private vtPending = new Set<TrackedRun>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastDiscovery = 0;
   private lastSummary = 0;
@@ -136,6 +139,8 @@ export class Collector {
           tracked: this.tracked.size,
           withState: states.length,
           running: states.filter((s) => s.lastState?.status === 'running').length,
+          pending: { mia: this.miaPending.size, vt: this.vtPending.size },
+          gateQueue: gateQueueDepth(),
         });
       }
       this.onTick?.(this.tracked.size);
@@ -272,16 +277,25 @@ export class Collector {
   }
 
   private async pollRun(tr: TrackedRun, now: number): Promise<void> {
-    const wantMia = tr.nextMiaAt <= now && !sourcePaused(this.db, MIA_SOURCE, now);
-    const wantVt = tr.nextVtAt <= now && !sourcePaused(this.db, VT_SOURCE, now);
+    // A run is never re-queued for a source while its previous poll for that
+    // source is still pending (waiting in the http gate or in flight). Without
+    // this, demand above the gate's rate (~2.5 req/s/source at the morning
+    // peak) queued a fresh poll every interval on top of the unfinished one:
+    // the backlog grew without bound — 925k parked requests after 2.7 days,
+    // ~4 GB of heap and 2+ cores — and every request it eventually sent was
+    // already stale. With the guard, overload just stretches the interval.
+    const wantMia = tr.nextMiaAt <= now && !this.miaPending.has(tr) && !sourcePaused(this.db, MIA_SOURCE, now);
+    const wantVt = tr.nextVtAt <= now && !this.vtPending.has(tr) && !sourcePaused(this.db, VT_SOURCE, now);
     const jobs: Array<Promise<void>> = [];
     if (wantMia) {
       tr.nextMiaAt = now + Math.max(pollIntervalMs(tr, this.cfg, now), this.cfg.minPollSeconds * 1000);
-      jobs.push(this.pollMia(tr));
+      this.miaPending.add(tr);
+      jobs.push(this.pollMia(tr).finally(() => this.miaPending.delete(tr)));
     }
     if (wantVt) {
       tr.nextVtAt = now + Math.max(pollIntervalMs(tr, this.cfg, now), this.cfg.minPollSeconds * 1000);
-      jobs.push(this.pollVt(tr));
+      this.vtPending.add(tr);
+      jobs.push(this.pollVt(tr).finally(() => this.vtPending.delete(tr)));
     }
     await Promise.all(jobs);
   }

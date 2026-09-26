@@ -28,26 +28,63 @@ const lastReqAt = new Map<string, number>();
 const inflight = new Map<string, number>();
 const MAX_CONCURRENCY = 2;
 
+interface GateWaiter { minIntervalMs: number; admit: () => void }
+/** FIFO per source. Waiters are parked promises, woken by at most one timer
+ * per source — a queued request costs no CPU while it waits. (The previous
+ * gate re-polled every 150 ms per waiter, so a backlog burned CPU linearly
+ * in its own length.) */
+const waiters = new Map<string, GateWaiter[]>();
+const wakeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function gate(source: string, minIntervalMs: number): Promise<void> {
-  for (;;) {
-    const now = Date.now();
-    const last = lastReqAt.get(source) ?? 0;
+function gate(source: string, minIntervalMs: number): Promise<void> {
+  return new Promise((admit) => {
+    let q = waiters.get(source);
+    if (!q) waiters.set(source, (q = []));
+    q.push({ minIntervalMs, admit });
+    pump(source);
+  });
+}
+
+/** Admit queued waiters for `source` in order while concurrency and spacing
+ * allow; otherwise arm the single wake timer (spacing) or wait for release()
+ * (concurrency). */
+function pump(source: string): void {
+  if (wakeTimers.has(source)) return;
+  const q = waiters.get(source);
+  while (q && q.length > 0) {
     const n = inflight.get(source) ?? 0;
-    if (n < MAX_CONCURRENCY && now - last >= minIntervalMs) {
-      inflight.set(source, n + 1);
-      lastReqAt.set(source, now);
+    if (n >= MAX_CONCURRENCY) return;
+    const now = Date.now();
+    const waitMs = (lastReqAt.get(source) ?? 0) + q[0]!.minIntervalMs - now;
+    if (waitMs > 0) {
+      wakeTimers.set(source, setTimeout(() => {
+        wakeTimers.delete(source);
+        pump(source);
+      }, waitMs));
       return;
     }
-    await sleep(150);
+    const w = q.shift()!;
+    inflight.set(source, n + 1);
+    lastReqAt.set(source, now);
+    w.admit();
   }
 }
 
 function release(source: string): void {
-  inflight.set(source, (inflight.get(source) ?? 1) - 1);
+  inflight.set(source, Math.max(0, (inflight.get(source) ?? 1) - 1));
+  pump(source);
+}
+
+/** Requests waiting in the per-source gate (for the collector summary). A
+ * number that keeps climbing means demand exceeds the gate's rate. */
+export function gateQueueDepth(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [source, q] of waiters) if (q.length > 0) out[source] = q.length;
+  return out;
 }
 
 export async function politeFetch(url: string, opts: PoliteOptions): Promise<FetchResult> {

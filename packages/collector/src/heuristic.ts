@@ -78,6 +78,13 @@ export interface HeuristicPrediction {
     corridorSevereTrains: number | null;       // of those, trains >10 min late (double-weight candidate (b))
     corridorCancelledTrains: number | null;    // trains cancelled at the next stop in the window (strongest propagation evidence)
     corridorMedianDeltaSec: number | null;     // median runtime delta across those traversals (the corridor deviation)
+    // set only when the residual model corrected this prediction: the
+    // heuristic-v1 baseline it started from, so `npm run train` can learn
+    // the residual against the baseline instead of against its own output
+    baseP10?: number;
+    baseP50?: number;
+    baseP90?: number;
+    correctionSec?: number;
     corridorEvidencePersisted: number | null;  // 1/0: same deviation present at the previous refresh too (candidate (a)); null when persistence tracking is off
   };
 }
@@ -303,11 +310,25 @@ function alertFeatures(db: Db, run: RunRecord): { onRun: number; onRoute: number
   return { onRun: Math.min(onRun, 10), onRoute: Math.min(onRoute, 10) };
 }
 
+// Network-wide mean operator delay over the last 10 min. Identical for every
+// prediction in a poll cycle, so memoize it briefly instead of re-aggregating
+// train_state (json_extract over every recent row) once per prediction.
+const NETWORK_DELAY_TTL_MS = 30_000;
+let networkDelayCache: { at: number; value: number | null } | null = null;
+
 function networkDelayNow(db: Db): number | null {
+  const now = Date.now();
+  if (networkDelayCache && now - networkDelayCache.at < NETWORK_DELAY_TTL_MS) return networkDelayCache.value;
+  const value = computeNetworkDelayNow(db, now);
+  networkDelayCache = { at: now, value };
+  return value;
+}
+
+function computeNetworkDelayNow(db: Db, now: number): number | null {
   const r = getRow<{ m: number }>(
     db,
     "SELECT AVG(CAST(json_extract(state_json,'$.operatorDelaySec') AS REAL)) AS m FROM train_state WHERE updated_at > ? AND json_extract(state_json,'$.operatorDelaySec') IS NOT NULL",
-    [Date.now() - 10 * 60_000],
+    [now - 10 * 60_000],
   );
   return r?.m != null ? Math.round(r.m) : null;
 }

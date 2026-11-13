@@ -72,6 +72,10 @@ services:
     volumes:
       - ch-data:/var/lib/clickhouse
       - ./deploy/clickhouse-init:/docker-entrypoint-initdb.d:ro
+      # low-write tuning: warning-level logs, short system-log TTLs, no
+      # trace/profiling tables, server-side async_insert for the mirror
+      - ./deploy/clickhouse-config/zz-lowwrite.xml:/etc/clickhouse-server/config.d/zz-lowwrite.xml:ro
+      - ./deploy/clickhouse-users/20-lowwrite-profile.xml:/etc/clickhouse-server/users.d/20-lowwrite-profile.xml:ro
     # host access is for local debugging only — bound to loopback so a public
     # server never exposes an unauthenticated ClickHouse
     ports:

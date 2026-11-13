@@ -449,6 +449,13 @@ export function fuseAndPredict(db: Db, runId: number): FusedState {
       p50: corrected.p50,
       p90: corrected.p90,
       modelVersion: corrected.modelVersion,
+      features: {
+        ...prediction.features,
+        baseP10: prediction.p10,
+        baseP50: prediction.p50,
+        baseP90: prediction.p90,
+        correctionSec: corrected.correctionSec,
+      },
     };
   }
   if (prediction) {

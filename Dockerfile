@@ -27,9 +27,10 @@ RUN mkdir -p /data
 VOLUME /data
 EXPOSE 8787
 
-# slim has no curl/wget — probe the API health route with node's built-in fetch.
+# slim has no curl/wget — probe the cheap liveness route with node's built-in fetch.
+# (/api/health computes table counts; keep it for humans/monitors, not a 30 s probe.)
 # (Roles that don't serve HTTP disable this in docker-compose.yml.)
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=60s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:8787/api/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["npx", "tsx", "packages/collector/src/index.ts"]

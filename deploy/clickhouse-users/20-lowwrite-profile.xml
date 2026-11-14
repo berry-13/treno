@@ -1,0 +1,27 @@
+<clickhouse>
+  <!--
+    2026-11-13 fix P6/P7 (ZC1 sweep). The collector mirrors rows with tiny
+    synchronous JSONEachRow inserts (~52k new parts/day -> ~32 GiB/day of
+    merges). Server-side async_insert buffers them per table and writes one
+    part every 120 s. wait_for_async_insert=0 because the client request_timeout
+    is 30 s (waiting for a 120 s buffer would time out). The mirror is
+    fire-and-forget anyway; SQLite stays the truth.
+    Also turn off the per-query profilers that fill trace_log and
+    processors_profile_log.
+  -->
+  <profiles>
+    <default>
+      <async_insert>1</async_insert>
+      <wait_for_async_insert>0</wait_for_async_insert>
+      <async_insert_use_adaptive_busy_timeout>0</async_insert_use_adaptive_busy_timeout>
+      <async_insert_busy_timeout_max_ms>120000</async_insert_busy_timeout_max_ms>
+      <async_insert_busy_timeout_ms>120000</async_insert_busy_timeout_ms>
+      <async_insert_max_data_size>33554432</async_insert_max_data_size>
+      <async_insert_max_query_number>10000</async_insert_max_query_number>
+      <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+      <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+      <memory_profiler_step>0</memory_profiler_step>
+      <log_processors_profiles>0</log_processors_profiles>
+    </default>
+  </profiles>
+</clickhouse>

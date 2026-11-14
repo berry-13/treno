@@ -4,7 +4,7 @@
  * per-source gate spaces requests, and sources pause after consecutive
  * failures. Every fetch is persisted as a raw snapshot before normalization.
  */
-import { getRow, type Db } from '#core/db.ts';
+import { getRow, withTransaction, type Db } from '#core/db.ts';
 import { log } from '#core/log.ts';
 import { join } from 'node:path';
 import type { Config } from '#core/config.ts';
@@ -304,50 +304,56 @@ export class Collector {
     const fetchedAt = Date.now();
     try {
       const f = await fetchMia(tr.trainNumber, this.cfg.userAgent);
-      const snap = putSnapshot(this.db, this.cfg.dataDir, {
-        source: MIA_SOURCE,
-        entityKey: 'train|' + tr.trainNumber,
-        fetchedAt,
-        httpStatus: f.result.status,
-        etag: f.result.etag,
-        lastModified: f.result.lastModified,
-        payloadJson: f.raw,
-        relevantHash: f.relevantHash || null,
-        parserVersion: MIA_PARSER_VERSION,
-        error: f.result.ok ? null : f.result.error,
-      });
-      updateProviderHealth(this.db, MIA_SOURCE, {
-        ok: f.result.ok || isEntityMiss(f.result.status),
-        latencyMs: f.result.latencyMs,
-        error: isEntityMiss(f.result.status) ? null : f.result.error,
-        changed: snap.changed,
-      });
-      if (!f.result.ok) {
-        if (isEntityMiss(f.result.status)) {
-          log.info('collector: mia entity miss', { train: tr.trainNumber, status: f.result.status });
-        }
-        return;
-      }
-      if (!f.snapshot) return;
-      const res = ingestSnapshot(this.db, f.snapshot, { fetchedAt, snapshot: snap });
-      if (tr.runId == null || res.runId !== tr.runId) {
-        // provider answered for a different (or new) run of this number
-        const k = this.key(f.snapshot.serviceDate, f.snapshot.trainNumber);
-        const cur = this.tracked.get(k);
-        if (cur) cur.runId = res.runId;
-        else if (tr.watch && f.snapshot.serviceDate === tr.serviceDate) tr.runId = res.runId;
-      }
-      if (snap.changed) {
-        this.ingestState(tr, res.runId);
-      } else if (tr.runId != null) {
-        this.reloadStateQuietly(tr);
-      }
-      if (f.result.status === 403 || f.result.status === 429) {
-        markSourcePause(this.db, MIA_SOURCE, Date.now() + 10 * 60_000);
-      }
+      // everything below is synchronous: commit this poll result's rows in
+      // one transaction instead of one autocommit per row
+      withTransaction(this.db, () => this.storeMia(tr, f, fetchedAt));
     } catch (e) {
       updateProviderHealth(this.db, MIA_SOURCE, { ok: false, latencyMs: null, error: String(e) });
       log.warn('collector: mia poll error', { train: tr.trainNumber, error: String(e) });
+    }
+  }
+
+  private storeMia(tr: TrackedRun, f: Awaited<ReturnType<typeof fetchMia>>, fetchedAt: number): void {
+    const snap = putSnapshot(this.db, this.cfg.dataDir, {
+      source: MIA_SOURCE,
+      entityKey: 'train|' + tr.trainNumber,
+      fetchedAt,
+      httpStatus: f.result.status,
+      etag: f.result.etag,
+      lastModified: f.result.lastModified,
+      payloadJson: f.raw,
+      relevantHash: f.relevantHash || null,
+      parserVersion: MIA_PARSER_VERSION,
+      error: f.result.ok ? null : f.result.error,
+    });
+    updateProviderHealth(this.db, MIA_SOURCE, {
+      ok: f.result.ok || isEntityMiss(f.result.status),
+      latencyMs: f.result.latencyMs,
+      error: isEntityMiss(f.result.status) ? null : f.result.error,
+      changed: snap.changed,
+    });
+    if (!f.result.ok) {
+      if (isEntityMiss(f.result.status)) {
+        log.info('collector: mia entity miss', { train: tr.trainNumber, status: f.result.status });
+      }
+      return;
+    }
+    if (!f.snapshot) return;
+    const res = ingestSnapshot(this.db, f.snapshot, { fetchedAt, snapshot: snap });
+    if (tr.runId == null || res.runId !== tr.runId) {
+      // provider answered for a different (or new) run of this number
+      const k = this.key(f.snapshot.serviceDate, f.snapshot.trainNumber);
+      const cur = this.tracked.get(k);
+      if (cur) cur.runId = res.runId;
+      else if (tr.watch && f.snapshot.serviceDate === tr.serviceDate) tr.runId = res.runId;
+    }
+    if (snap.changed) {
+      this.ingestState(tr, res.runId);
+    } else if (tr.runId != null) {
+      this.reloadStateQuietly(tr);
+    }
+    if (f.result.status === 403 || f.result.status === 429) {
+      markSourcePause(this.db, MIA_SOURCE, Date.now() + 10 * 60_000);
     }
   }
 
@@ -370,31 +376,36 @@ export class Collector {
       }
       const fetchedAt = Date.now();
       const f = await fetchVtTrain(tr.vtRef, this.cfg.userAgent);
-      const snap = putSnapshot(this.db, this.cfg.dataDir, {
-        source: VT_SOURCE,
-        entityKey: tr.vtRef.trainNumber + '|' + tr.vtRef.originCode + '|' + String(tr.vtRef.departureEpochMs),
-        fetchedAt,
-        httpStatus: f.result.status,
-        etag: f.result.etag,
-        lastModified: f.result.lastModified,
-        payloadJson: f.raw,
-        relevantHash: f.relevantHash || null,
-        parserVersion: VT_PARSER_VERSION,
-        error: f.result.ok ? null : f.result.error,
-      });
-      updateProviderHealth(this.db, VT_SOURCE, {
-        ok: f.result.ok || isEntityMiss(f.result.status),
-        latencyMs: f.result.latencyMs,
-        error: isEntityMiss(f.result.status) ? null : f.result.error,
-        changed: snap.changed,
-      });
-      if (!f.result.ok || !f.snapshot) return;
-      const res = ingestSnapshot(this.db, f.snapshot, { fetchedAt, snapshot: snap });
-      if (snap.changed) this.ingestState(tr, res.runId);
+      const vtRef = tr.vtRef;
+      withTransaction(this.db, () => this.storeVt(tr, vtRef, f, fetchedAt));
     } catch (e) {
       updateProviderHealth(this.db, VT_SOURCE, { ok: false, latencyMs: null, error: String(e) });
       log.warn('collector: vt poll error', { train: tr.trainNumber, error: String(e) });
     }
+  }
+
+  private storeVt(tr: TrackedRun, vtRef: VtTrainRef, f: Awaited<ReturnType<typeof fetchVtTrain>>, fetchedAt: number): void {
+    const snap = putSnapshot(this.db, this.cfg.dataDir, {
+      source: VT_SOURCE,
+      entityKey: vtRef.trainNumber + '|' + vtRef.originCode + '|' + String(vtRef.departureEpochMs),
+      fetchedAt,
+      httpStatus: f.result.status,
+      etag: f.result.etag,
+      lastModified: f.result.lastModified,
+      payloadJson: f.raw,
+      relevantHash: f.relevantHash || null,
+      parserVersion: VT_PARSER_VERSION,
+      error: f.result.ok ? null : f.result.error,
+    });
+    updateProviderHealth(this.db, VT_SOURCE, {
+      ok: f.result.ok || isEntityMiss(f.result.status),
+      latencyMs: f.result.latencyMs,
+      error: isEntityMiss(f.result.status) ? null : f.result.error,
+      changed: snap.changed,
+    });
+    if (!f.result.ok || !f.snapshot) return;
+    const res = ingestSnapshot(this.db, f.snapshot, { fetchedAt, snapshot: snap });
+    if (snap.changed) this.ingestState(tr, res.runId);
   }
 
   private vtRefMatches(r: VtTrainRef, tr: TrackedRun): boolean {

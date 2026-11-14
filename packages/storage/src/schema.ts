@@ -76,4 +76,14 @@ export function ensureNormalizedTables(db: Db): void {
   // key = slug(location_name), lowercase-hyphenated. lat/lon stay NULL
   // unless known offline (gtfs coords for matched stations) — no geocoding.
   db.exec(`CREATE TABLE IF NOT EXISTS rail_locations(key TEXT PRIMARY KEY, name TEXT, type TEXT CHECK(type IN ('PASSENGER_STATION','JUNCTION','BIVIO','CONTROL_POINT','UNKNOWN_REPORTING_POINT')), lat REAL, lon REAL, first_seen INTEGER, last_seen INTEGER, observation_count INTEGER, updated_at INTEGER)`);
+  // Hot-path lookup indexes (2026-11-13). Without them alertFeatures,
+  // networkDelayNow, contextFeatures and fuseRunState's per-source latest
+  // observation each scanned a full table on every prediction (~1 core and
+  // ~1.7 GB/s of page-cache reads at 1.1M service_alerts rows).
+  db.exec('CREATE INDEX IF NOT EXISTS idx_alerts_run_created ON service_alerts(run_id, created_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_alerts_stop_created ON service_alerts(stop_id, created_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_alerts_created ON service_alerts(created_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_state_updated ON train_state(updated_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_runs_num_dest ON train_runs(train_number, destination_stop_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_obs_run_source_ts ON train_observations(run_id, source, ts)');
 }

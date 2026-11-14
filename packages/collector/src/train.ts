@@ -33,25 +33,40 @@ export function extract(): TrainRow[] {
   const db = openTrenoDb(cfg);
   const since = Date.now() - 21 * 86400_000;
   const rows = db.prepare(
-    `SELECT p.run_id, p.generated_at, p.sched_arr_epoch, p.operator_eta_epoch, p.our_p10, p.our_p50, p.our_p90, p.features_json, o.our_error_sec, o.operator_error_sec
+    // heuristic-v1 rows, plus residual-corrected rows (model_version
+    // 'heuristic-v1+residual-v1'). Once a residual model is deployed every
+    // prediction is corrected, so filtering on the bare heuristic version
+    // left the trainer with zero rows forever. Corrected rows are only used
+    // when they recorded their heuristic baseline (features.baseP50); the
+    // label is then re-based on it, so we never fit a residual of a residual.
+    `SELECT p.model_version, p.run_id, p.generated_at, p.sched_arr_epoch, p.operator_eta_epoch, p.our_p10, p.our_p50, p.our_p90, p.features_json, o.our_error_sec, o.operator_error_sec
      FROM predictions p JOIN prediction_outcomes o ON o.prediction_id = p.id
-     WHERE p.model_version='heuristic-v1' AND p.features_json IS NOT NULL
+     WHERE p.model_version LIKE 'heuristic-v1%' AND p.features_json IS NOT NULL
        AND o.our_error_sec IS NOT NULL AND p.our_p50 IS NOT NULL AND p.generated_at >= ?
        AND p.sched_arr_epoch IS NOT NULL
        AND p.sched_arr_epoch - p.generated_at BETWEEN 0 AND 3600000
-       AND ABS(o.our_error_sec) <= 2700
      ORDER BY p.generated_at ASC`,
   ).all(since) as Array<{
-    run_id: number; generated_at: number; sched_arr_epoch: number | null; operator_eta_epoch: number | null;
+    model_version: string; run_id: number; generated_at: number; sched_arr_epoch: number | null; operator_eta_epoch: number | null;
     our_p10: number; our_p50: number; our_p90: number; features_json: string; our_error_sec: number; operator_error_sec: number | null;
   }>;
   // db stays open through the loop: the §78 spread fallback queries
   // source_conflicts per row (closed after)
   const out: TrainRow[] = [];
   for (const r of rows) {
-    let f: Partial<FeatureInput> = {};
-    try { f = JSON.parse(r.features_json) as Partial<FeatureInput>; } catch { continue; }
+    type StoredFeatures = Partial<FeatureInput> & { baseP10?: number; baseP50?: number; baseP90?: number };
+    let f: StoredFeatures = {};
+    try { f = JSON.parse(r.features_json) as StoredFeatures; } catch { continue; }
     if (typeof f.remainingSegments !== 'number' || typeof f.statsCoverage !== 'number') continue;
+    const corrected = r.model_version !== 'heuristic-v1';
+    if (corrected && (typeof f.baseP50 !== 'number' || typeof f.baseP10 !== 'number' || typeof f.baseP90 !== 'number')) continue;
+    const baseP50 = corrected ? f.baseP50! : r.our_p50;
+    const baseP10 = corrected ? f.baseP10! : r.our_p10;
+    const baseP90 = corrected ? f.baseP90! : r.our_p90;
+    // our_error_sec = (actual - our_p50) / 1000, so the baseline's error is
+    // that plus how far the correction moved p50 away from the baseline
+    const label = corrected ? Math.round(r.our_error_sec + (r.our_p50 - baseP50) / 1000) : r.our_error_sec;
+    if (Math.abs(label) > 2700) continue;
     out.push({
       runId: r.run_id,
       generatedAt: r.generated_at,
@@ -59,9 +74,9 @@ export function extract(): TrainRow[] {
         generatedAt: r.generated_at,
         schedArrEpoch: r.sched_arr_epoch,
         operatorEtaEpoch: r.operator_eta_epoch,
-        ourP50: r.our_p50,
-        ourP10: r.our_p10,
-        ourP90: r.our_p90,
+        ourP50: baseP50,
+        ourP10: baseP10,
+        ourP90: baseP90,
         anchorKind: f.anchorKind ?? null,
         remainingSegments: f.remainingSegments,
         statsCoverage: f.statsCoverage,
@@ -83,7 +98,7 @@ export function extract(): TrainRow[] {
         // carries the signal too; featureRow maps null → 0 on both paths
         delaySourceSpreadSec: f.delaySourceSpreadSec ?? latestConflictSpread(db, r.run_id, r.generated_at),
       },
-      label: r.our_error_sec,
+      label,
       operatorErrorSec: r.operator_error_sec,
     });
   }

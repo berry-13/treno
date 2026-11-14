@@ -9,7 +9,36 @@ export function openDb(path: string): Db {
   db.exec('PRAGMA synchronous = NORMAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
+  // Cap the WAL file left behind after a checkpoint (it sat at ~790 MB) and
+  // give each connection a 64 MiB page cache (default is 2 MiB).
+  db.exec('PRAGMA journal_size_limit = 67108864');
+  db.exec('PRAGMA cache_size = -65536');
+  // Keep planner statistics current on long-lived connections
+  // (https://sqlite.org/lang_analyze.html#autoanalyze). analysis_limit keeps
+  // the ANALYZE pass bounded on the multi-GB database.
+  db.exec('PRAGMA analysis_limit = 400');
+  db.exec('PRAGMA optimize = 0x10002');
   return db;
+}
+
+/**
+ * Run `fn` inside one short write transaction (BEGIN IMMEDIATE ... COMMIT),
+ * rolling back if it throws. `fn` must be synchronous: never hold the write
+ * lock across an await. If a transaction is already open, `fn` simply joins
+ * it. Batching a poll result's inserts this way turns dozens of autocommits
+ * (each a WAL append + fsync-ordered page rewrite) into one.
+ */
+export function withTransaction<T>(db: Db, fn: () => T): T {
+  if ((db as { isTransaction?: boolean }).isTransaction === true) return fn();
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const out = fn();
+    db.exec('COMMIT');
+    return out;
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+    throw e;
+  }
 }
 
 /**

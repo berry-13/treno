@@ -6,7 +6,7 @@
  *
  * All mirroring is fire-and-forget: queueing and flushing must never throw
  * into the collector pipeline. Rows are batched per table and flushed every
- * 5s or 500 rows with async_insert, so a failed flush only ever loses mirror
+ * 30s or 5000 rows, so a failed flush only ever loses mirror
  * lag — SQLite remains recoverable via ch:backfill.
  *
  * Data-plane only: table DDL lives in deploy/clickhouse-init/01_tables.sql
@@ -20,8 +20,15 @@ import { log } from '#core/log.ts';
 
 export type ChRow = Record<string, unknown>;
 
-const FLUSH_INTERVAL_MS = 5_000;
-const FLUSH_ROWS = 500;
+// Fewer, larger inserts: every insert is a new MergeTree part, and at 5 s /
+// 500 rows the server spent ~32 GiB/day merging ~150 MB/day of rows.
+const FLUSH_INTERVAL_MS = 30_000;
+const FLUSH_ROWS = 5_000;
+// Failed batches are re-queued (not dropped) up to this many rows per table;
+// beyond it the oldest rows are dropped and left to ch:backfill.
+const MAX_QUEUED_ROWS = 100_000;
+const RETRY_BASE_MS = 5_000;
+const RETRY_MAX_MS = 5 * 60_000;
 
 /** The only table names accepted by queue()/insert(). */
 export const CH_TABLES = [
@@ -49,6 +56,8 @@ class CHSink {
   private client: ClickHouseClient | null = null;
   private queues = new Map<ChTable, ChRow[]>();
   private timer: NodeJS.Timeout | null = null;
+  private flushing = new Set<ChTable>();
+  private retry = new Map<ChTable, { failures: number; notBefore: number }>();
 
   get enabled(): boolean {
     return this.client != null;
@@ -61,7 +70,10 @@ class CHSink {
     // 'Z'; older servers' default 'basic' parser rejects the offset suffix.
     this.client = createClient({
       url,
-      request_timeout: 10_000,
+      request_timeout: 30_000,
+      // the server closes idle keep-alive sockets after 10 s; drop ours first
+      // so a flush never reuses a socket the server already hung up on
+      keep_alive: { enabled: true, idle_socket_ttl: 4_000 },
       clickhouse_settings: { date_time_input_format: 'best_effort' },
     });
     process.on('beforeExit', () => {
@@ -76,22 +88,38 @@ class CHSink {
     if (!q) this.queues.set(table, (q = []));
     q.push(row);
     if (!this.timer) this.timer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
-    if (q.length >= FLUSH_ROWS) void this.flush(table);
+    if (q.length >= FLUSH_ROWS && !this.retry.has(table)) void this.flush(table);
   }
 
-  /** Flush queued rows (all tables, or one). Insert failures drop the batch:
-   * SQLite remains the recoverable truth via ch:backfill. */
+  /** Flush queued rows (all tables, or one). A failed batch is put back at
+   * the head of its queue and retried with capped exponential backoff; only
+   * overflow beyond MAX_QUEUED_ROWS is dropped (SQLite remains the
+   * recoverable truth via ch:backfill). One flush per table at a time. */
   async flush(table?: string): Promise<void> {
     if (!this.client) return;
     const tables: ChTable[] = table && isChTable(table) ? [table] : [...this.queues.keys()];
+    const now = Date.now();
     for (const t of tables) {
       const q = this.queues.get(t);
-      if (!q?.length) continue;
+      if (!q?.length || this.flushing.has(t)) continue;
+      const r = this.retry.get(t);
+      if (r && now < r.notBefore) continue;
       const rows = q.splice(0, q.length);
+      this.flushing.add(t);
       try {
         await this.insert(t, rows);
+        this.retry.delete(t);
       } catch (e) {
-        log.warn('ch flush failed; rows dropped (sqlite remains truth)', { table: t, rows: rows.length, error: String(e) });
+        const failures = (r?.failures ?? 0) + 1;
+        const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (failures - 1));
+        this.retry.set(t, { failures, notBefore: Date.now() + delay });
+        const cur = this.queues.get(t) ?? [];
+        const merged = rows.concat(cur);
+        const dropped = Math.max(0, merged.length - MAX_QUEUED_ROWS);
+        this.queues.set(t, dropped > 0 ? merged.slice(dropped) : merged);
+        log.warn('ch flush failed; batch re-queued', { table: t, rows: rows.length, failures, retryInMs: delay, dropped, error: String(e) });
+      } finally {
+        this.flushing.delete(t);
       }
     }
   }
@@ -120,6 +148,7 @@ class CHSink {
   }
 
   async close(): Promise<void> {
+    this.retry.clear();
     await this.flush();
     if (this.timer) clearInterval(this.timer);
     await this.client?.close();

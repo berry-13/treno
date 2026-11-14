@@ -4,7 +4,8 @@
  *   npx tsx packages/api/src/server.ts
  *
  * Endpoints:
- *   GET /api/health                  providers + counts
+ *   GET /api/health                  providers + counts (counts cached 5 min)
+ *   GET /api/healthz                 liveness only (SELECT 1), for the Docker healthcheck
  *   GET /api/trains?q=&limit=        search train runs (fused state included)
  *   GET /api/trains/:id              full run: schedule, stop events, state
  *   GET /api/stops/search?q=
@@ -70,25 +71,40 @@ export function buildApp(db: Db) {
   // nightly backtest reports land here (03:30 trainer loop)
   const reportsDir = join(loadConfig().dataDir, 'reports');
 
+  // Liveness probe for the Docker HEALTHCHECK: one trivial query, no table
+  // scans. /api/health's COUNT(*)s read ~700 MB of SQLite pages per call.
+  app.get('/api/healthz', (c) => {
+    getRow<{ ok: number }>(db, 'SELECT 1 AS ok');
+    return c.json({ ok: true });
+  });
+
+  // Row counts are informational; recomputing them on every /api/health call
+  // full-scans 11 tables (0.4-0.6 s, ~700 MB rchar). Cache them for 5 min.
+  const COUNTS_TTL_MS = 5 * 60_000;
+  let countsCache: { at: number; value: Record<string, number> } | null = null;
+  const computeCounts = (): Record<string, number> => ({
+    runs: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM train_runs') ?? { n: 0 }).n,
+    observations: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM train_observations') ?? { n: 0 }).n,
+    stopEvents: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM train_stop_events') ?? { n: 0 }).n,
+    snapshots: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM source_snapshots') ?? { n: 0 }).n,
+    predictions: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM predictions') ?? { n: 0 }).n,
+    scoredOutcomes: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM prediction_outcomes') ?? { n: 0 }).n,
+    segmentObservations: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM segment_observation') ?? { n: 0 }).n,
+    segmentsWithStats: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM segment_stats') ?? { n: 0 }).n,
+    // historical structural priors (Monechi 2015): same row semantics as
+    // segmentsWithStats (segment × bucket); priors never shift point
+    // estimates, they only carry distribution shape for segments without
+    // live coverage. segmentsEffective counts distinct segments served by
+    // either table.
+    segmentsWithPriors: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM segment_stats_prior') ?? { n: 0 }).n,
+    segmentsEffective: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM (SELECT segment_id FROM segment_stats UNION SELECT segment_id FROM segment_stats_prior)') ?? { n: 0 }).n,
+    alerts: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM service_alerts') ?? { n: 0 }).n,
+  });
+
   app.get('/api/health', (c) => {
-    const counts = {
-      runs: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM train_runs') ?? { n: 0 }).n,
-      observations: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM train_observations') ?? { n: 0 }).n,
-      stopEvents: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM train_stop_events') ?? { n: 0 }).n,
-      snapshots: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM source_snapshots') ?? { n: 0 }).n,
-      predictions: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM predictions') ?? { n: 0 }).n,
-      scoredOutcomes: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM prediction_outcomes') ?? { n: 0 }).n,
-      segmentObservations: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM segment_observation') ?? { n: 0 }).n,
-      segmentsWithStats: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM segment_stats') ?? { n: 0 }).n,
-      // historical structural priors (Monechi 2015): same row semantics as
-      // segmentsWithStats (segment × bucket); priors never shift point
-      // estimates, they only carry distribution shape for segments without
-      // live coverage. segmentsEffective counts distinct segments served by
-      // either table.
-      segmentsWithPriors: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM segment_stats_prior') ?? { n: 0 }).n,
-      segmentsEffective: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM (SELECT segment_id FROM segment_stats UNION SELECT segment_id FROM segment_stats_prior)') ?? { n: 0 }).n,
-      alerts: (getRow<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM service_alerts') ?? { n: 0 }).n,
-    };
+    const now = Date.now();
+    if (!countsCache || now - countsCache.at > COUNTS_TTL_MS) countsCache = { at: now, value: computeCounts() };
+    const counts = countsCache.value;
     // F8 readiness probes (national rail, RAPSODIA catalog) — newest per kind
     const probes: Record<string, unknown> = {};
     try {
